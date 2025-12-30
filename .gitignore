@@ -1,0 +1,39 @@
+# Next.js specific ignores
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# Python specific ignores
+# Byte-code files
+*.pyc
+__pycache__/
+
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+bin/
+lib/
+include/
+
+
+# IDE specific files (optional, uncomment as needed)
+.vscode/
+.idea/
+
+# Ruff cache
+.ruff_cache/
+
+# Misc
+.python-version # usually not a good idea to lock to a specific tiny version
+*.zip
