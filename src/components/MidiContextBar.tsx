@@ -59,7 +59,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   // Context label editing
   const [currentContextId, setCurrentContextId] = useState<number | null>(null);
   const [contextLabel, setContextLabel] = useState<string>("");
-  const [isEditingLabel, setIsEditingLabel] = useState(false);
 
   const debounceRef = useRef<number | null>(null);
   const lastContextKeyRef = useRef<string>("");
@@ -241,20 +240,30 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     onChange(header);
   };
 
-  // Save context label
-  const saveContextLabel = async () => {
-    if (currentContextId === null) return;
+  // Save current context with a label
+  const saveCurrentContext = async () => {
+    if (currentContextId === null) {
+      setSendStatus("No context selected");
+      return;
+    }
+
+    const label = window.prompt(
+      "Name this context:",
+      contextLabel || `DAW ${draft?.daw_slot} Preset ${draft?.preset_slot}`
+    );
+
+    if (label === null) return; // User cancelled
 
     try {
-      await apiPost(`/api/contexts/${currentContextId}/label`, { label: contextLabel });
-      // Refresh contexts list to show updated label
+      await apiPost(`/api/contexts/${currentContextId}/label`, { label: label.trim() });
+      // Refresh contexts list to show new label
       const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
       setContextsWithBindings(contexts);
-      setIsEditingLabel(false);
-      setSendStatus("Label saved");
+      setContextLabel(label.trim());
+      setSendStatus("Context saved!");
       setTimeout(() => setSendStatus(""), 2000);
     } catch (e: any) {
-      setSendStatus(e?.message ?? "Label save failed");
+      setSendStatus(e?.message ?? "Save failed");
     }
   };
 
@@ -343,6 +352,18 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
 
   const disabled = !ports.length;
 
+  // Get current context info for display
+  const currentContext = contextsWithBindings.find(
+    (ctx) =>
+      ctx.daw_slot === draft.daw_slot &&
+      ctx.preset_slot === draft.preset_slot &&
+      ctx.port_id === draft.port_id &&
+      ctx.channel === draft.channel &&
+      ctx.bank_msb === draft.bank_msb &&
+      ctx.bank_lsb === draft.bank_lsb &&
+      ctx.program === draft.program
+  );
+
   return (
     <div style={{ display: "grid", gap: 10 }}>
       {err ? (
@@ -350,6 +371,72 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
           {err}
         </div>
       ) : null}
+
+      {/* Saved Contexts Dropdown & Save Button */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px", background: "rgba(0, 212, 255, 0.05)", borderRadius: "8px", border: "1px solid rgba(0, 212, 255, 0.2)" }}>
+        {contextsWithBindings.length > 0 ? (
+          <>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--accent)", minWidth: "max-content" }}>
+                Saved Contexts:
+              </span>
+              <select
+                value={currentContext ? currentContext.id : ""}
+                onChange={(e) => {
+                  const ctx = contextsWithBindings.find((c) => c.id === Number(e.target.value));
+                  if (ctx) jumpToContext(ctx);
+                }}
+                style={{ flex: 1 }}
+              >
+                <option value="" disabled>
+                  {currentContext ? currentContext.label || "Current (unlabeled)" : "Select a saved context..."}
+                </option>
+                {contextsWithBindings.map((ctx) => {
+                  const label =
+                    ctx.label ||
+                    `D${ctx.daw_slot} P${ctx.preset_slot} Port${ctx.port_id} Ch${ctx.channel + 1} M${ctx.bank_msb} L${ctx.bank_lsb} Prg${ctx.program}`;
+                  return (
+                    <option key={ctx.id} value={ctx.id}>
+                      {label} ({ctx.binding_count} bindings)
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <button
+              onClick={saveCurrentContext}
+              className="btn-secondary"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              title="Save current context with a custom name"
+            >
+              {currentContext?.label ? "Rename Context" : "Save Context As..."}
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1, fontSize: "12px", opacity: 0.7 }}>
+              No saved contexts yet. Configure your settings below and click "Save Context As..." to remember them.
+            </div>
+            <button
+              onClick={saveCurrentContext}
+              className="btn-secondary"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              disabled={currentContextId === null}
+              title="Save current context with a custom name"
+            >
+              Save Context As...
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Show current context status */}
+      {currentContextId !== null && (
+        <div style={{ fontSize: "11px", opacity: 0.7, padding: "4px 8px" }}>
+          Current: {contextLabel || `Context #${currentContextId} (no label)`}
+          {currentContext && ` • ${currentContext.binding_count} binding(s)`}
+        </div>
+      )}
 
       <div
         style={{
@@ -471,80 +558,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
           </select>
         </label>
       </div>
-
-      {/* Saved Contexts Section */}
-      {contextsWithBindings.length > 0 && (
-        <div style={{ display: "grid", gap: 8, padding: "12px", background: "rgba(0, 212, 255, 0.05)", borderRadius: "8px", border: "1px solid rgba(0, 212, 255, 0.2)" }}>
-          <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-            Saved Contexts ({contextsWithBindings.length})
-          </div>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {contextsWithBindings.map((ctx) => {
-              const label = ctx.label || `D${ctx.daw_slot} P${ctx.preset_slot} Port${ctx.port_id} Ch${ctx.channel + 1} M${ctx.bank_msb} L${ctx.bank_lsb} Prg${ctx.program}`;
-              const isCurrent =
-                draft &&
-                ctx.daw_slot === draft.daw_slot &&
-                ctx.preset_slot === draft.preset_slot &&
-                ctx.port_id === draft.port_id &&
-                ctx.channel === draft.channel &&
-                ctx.bank_msb === draft.bank_msb &&
-                ctx.bank_lsb === draft.bank_lsb &&
-                ctx.program === draft.program;
-
-              return (
-                <button
-                  key={ctx.id}
-                  onClick={() => jumpToContext(ctx)}
-                  className={isCurrent ? "btn-primary" : "btn"}
-                  style={{
-                    fontSize: "12px",
-                    padding: "6px 12px",
-                    opacity: isCurrent ? 1 : 0.85
-                  }}
-                  title={`${ctx.binding_count} binding(s)\nDAW: ${ctx.daw_slot}, Preset: ${ctx.preset_slot}, Port: ${ctx.port_id}, Ch: ${ctx.channel + 1}, MSB: ${ctx.bank_msb}, LSB: ${ctx.bank_lsb}, Prg: ${ctx.program}`}
-                >
-                  {label} ({ctx.binding_count})
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Current Context Label Editor */}
-          {currentContextId !== null && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255, 255, 255, 0.1)" }}>
-              <label style={{ fontSize: "12px", minWidth: "max-content" }}>Label for current context:</label>
-              {isEditingLabel ? (
-                <>
-                  <input
-                    type="text"
-                    value={contextLabel}
-                    onChange={(e) => setContextLabel(e.target.value)}
-                    placeholder="e.g. Ableton Live - Default"
-                    style={{ flex: 1 }}
-                    autoFocus
-                  />
-                  <button onClick={saveContextLabel} className="btn-secondary" style={{ fontSize: "12px", padding: "6px 12px" }}>
-                    Save
-                  </button>
-                  <button onClick={() => setIsEditingLabel(false)} className="btn" style={{ fontSize: "12px", padding: "6px 12px" }}>
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span style={{ flex: 1, opacity: 0.7, fontSize: "12px" }}>
-                    {contextLabel || "(no label)"}
-                  </span>
-                  <button onClick={() => setIsEditingLabel(true)} className="btn" style={{ fontSize: "12px", padding: "6px 12px" }}>
-                    {contextLabel ? "Edit" : "Add"} Label
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <button
