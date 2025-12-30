@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiPost, apiSendContext } from "./useMidiApi";
+import { apiGet, apiPost } from "./useMidiApi";
 import type { ContextHeader, Port } from "./types";
 
 type Props = {

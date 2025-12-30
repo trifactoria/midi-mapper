@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 export function Header() {
   const [showMenu, setShowMenu] = useState(false);
@@ -82,37 +83,6 @@ export function Header() {
                   </a>
                   <div style={{ height: 1, background: "rgba(255, 255, 255, 0.1)", margin: "4px 0" }} />
                   <a
-                    href="/bind"
-                    style={{
-                      display: "block",
-                      padding: "8px 16px",
-                      fontSize: 14,
-                      color: "#ededed",
-                      textDecoration: "none",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0, 212, 255, 0.1)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                  >
-                    Binding Editor
-                  </a>
-                  <a
-                    href="/console"
-                    style={{
-                      display: "block",
-                      padding: "8px 16px",
-                      fontSize: 14,
-                      color: "#ededed",
-                      textDecoration: "none",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0, 212, 255, 0.1)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                  >
-                    MIDI Console
-                  </a>
-                  <div style={{ height: 1, background: "rgba(255, 255, 255, 0.1)", margin: "4px 0" }} />
-                  <a
                     href="https://github.com/trifactoria/midi-mapper"
                     target="_blank"
                     rel="noopener noreferrer"
@@ -172,9 +142,13 @@ export function Header() {
             )}
           </div>
 
-          <div className="text-sm font-semibold tracking-wide">
+          <Link
+            href="/"
+            className="text-sm font-semibold tracking-wide"
+            style={{ color: "inherit", textDecoration: "none" }}
+          >
             MIDI Mapper
-          </div>
+          </Link>
         </div>
         <div className="text-xs text-white/45">
           Local-first · No cloud

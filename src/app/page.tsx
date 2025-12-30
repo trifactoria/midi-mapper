@@ -375,7 +375,7 @@ export default function Home() {
         onContextId={setContextId}
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 12, alignItems: "start" }}>
+      <div className="main-grid">
         <NoteGrid
           boundMarkers={boundMarkers}
           selectedNote={selectedNote}

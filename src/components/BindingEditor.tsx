@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "./useMidiApi";
-import type { Binding } from "./types";
 
 type Props = {
   contextId: number | null;
@@ -109,22 +108,28 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       return;
     }
     setStatus("Saving…");
-    const payload = {
-      context_id: contextId!,
-      enabled,
-      trig_type: 1,
-      note: selectedNote!,
-      cc: null,
-      command,
-      debounce_ms: debounceMs,
-      require_armed: requireArmed,
-      notes,
-      notify_text: notifyText,
-      notify_emoji: notifyEmoji.slice(0, 8), // Limit emoji to 8 chars
-    };
-    await apiPost("/api/bindings/set", payload);
-    setStatus("Saved.");
-    onBindingsChanged();
+    try {
+      const payload = {
+        context_id: contextId!,
+        enabled,
+        trig_type: 1,
+        note: selectedNote!,
+        cc: null,
+        command,
+        debounce_ms: debounceMs,
+        require_armed: requireArmed,
+        notes,
+        notify_text: notifyText,
+        notify_emoji: notifyEmoji.slice(0, 8), // Limit emoji to 8 chars
+      };
+      await apiPost("/api/bindings/set", payload);
+
+      // Reload the binding to get the ID and verify it saved
+      await getExisting();
+      onBindingsChanged();
+    } catch (err) {
+      setStatus(`Save failed: ${err}`);
+    }
   }
 
   async function removeBinding() {
