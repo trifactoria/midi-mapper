@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "./useMidiApi";
 import type { ContextHeader, Port } from "./types";
+import { Modal } from "./Modal";
 
 type Props = {
   value: ContextHeader | null;
@@ -59,6 +60,8 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   // Context label editing
   const [currentContextId, setCurrentContextId] = useState<number | null>(null);
   const [contextLabel, setContextLabel] = useState<string>("");
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [modalLabelInput, setModalLabelInput] = useState("");
 
   const debounceRef = useRef<number | null>(null);
   const lastContextKeyRef = useRef<string>("");
@@ -240,26 +243,33 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     onChange(header);
   };
 
-  // Save current context with a label
-  const saveCurrentContext = async () => {
+  // Open save modal
+  const openSaveModal = () => {
     if (currentContextId === null) {
       setSendStatus("No context selected");
       return;
     }
+    setModalLabelInput(contextLabel || `DAW ${draft?.daw_slot} Preset ${draft?.preset_slot}`);
+    setShowSaveModal(true);
+  };
 
-    const label = window.prompt(
-      "Name this context:",
-      contextLabel || `DAW ${draft?.daw_slot} Preset ${draft?.preset_slot}`
-    );
+  // Save current context with a label
+  const saveCurrentContext = async () => {
+    if (currentContextId === null) return;
 
-    if (label === null) return; // User cancelled
+    const label = modalLabelInput.trim();
+    if (!label) {
+      setSendStatus("Please enter a label");
+      return;
+    }
 
     try {
-      await apiPost(`/api/contexts/${currentContextId}/label`, { label: label.trim() });
+      await apiPost(`/api/contexts/${currentContextId}/label`, { label });
       // Refresh contexts list to show new label
       const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
       setContextsWithBindings(contexts);
-      setContextLabel(label.trim());
+      setContextLabel(label);
+      setShowSaveModal(false);
       setSendStatus("Context saved!");
       setTimeout(() => setSendStatus(""), 2000);
     } catch (e: any) {
@@ -404,7 +414,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
               </select>
             </label>
             <button
-              onClick={saveCurrentContext}
+              onClick={openSaveModal}
               className="btn-secondary"
               style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
               title="Save current context with a custom name"
@@ -418,7 +428,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
               No saved contexts yet. Configure your settings below and click "Save Context As..." to remember them.
             </div>
             <button
-              onClick={saveCurrentContext}
+              onClick={openSaveModal}
               className="btn-secondary"
               style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
               disabled={currentContextId === null}
@@ -571,6 +581,74 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
 
         {sendStatus ? <span style={{ opacity: 0.85 }}>{sendStatus}</span> : null}
       </div>
+
+      {/* Save Context Modal */}
+      <Modal
+        isOpen={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        title={currentContext?.label ? "Rename Context" : "Save Context As..."}
+      >
+        <div style={{ display: "grid", gap: 16 }}>
+          <div>
+            <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "8px", opacity: 0.9 }}>
+              Context Name
+            </label>
+            <input
+              type="text"
+              value={modalLabelInput}
+              onChange={(e) => setModalLabelInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  saveCurrentContext();
+                }
+              }}
+              placeholder="e.g., Ableton Live - Default"
+              autoFocus
+              style={{ width: "100%", fontSize: "14px" }}
+            />
+            <div style={{ fontSize: "11px", opacity: 0.6, marginTop: "6px" }}>
+              Give this configuration a memorable name so you can find it later.
+            </div>
+          </div>
+
+          {/* Current context details */}
+          {draft && (
+            <div
+              style={{
+                padding: "12px",
+                background: "rgba(255, 255, 255, 0.03)",
+                borderRadius: "6px",
+                border: "1px solid rgba(255, 255, 255, 0.1)",
+              }}
+            >
+              <div style={{ fontSize: "11px", opacity: 0.6, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Configuration Details
+              </div>
+              <div style={{ fontSize: "12px", fontFamily: "monospace", lineHeight: 1.6 }}>
+                <div>DAW: {draft.daw_slot}</div>
+                <div>Preset: {draft.preset_slot}</div>
+                <div>Port: {draft.port_id}</div>
+                <div>Channel: {draft.channel + 1}</div>
+                <div>
+                  Bank: MSB={draft.bank_msb} LSB={draft.bank_lsb}
+                </div>
+                <div>Program: {draft.program}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button onClick={() => setShowSaveModal(false)} className="btn" style={{ padding: "8px 20px" }}>
+              Cancel
+            </button>
+            <button onClick={saveCurrentContext} className="btn-secondary" style={{ padding: "8px 20px" }}>
+              {currentContext?.label ? "Rename" : "Save"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
