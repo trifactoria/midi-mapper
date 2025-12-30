@@ -212,6 +212,88 @@ async def apply_migrations() -> None:
             await db.commit()
 
 
+async def load_and_apply_defaults() -> None:
+    """Load defaults from settings and apply to ACTIVE_SELECTION and active_context_id."""
+    # Load defaults
+    daw_slot = await get_setting("default_daw_slot")
+    preset_slot = await get_setting("default_preset_slot")
+    port_id = await get_setting("default_port_id")
+    channel = await get_setting("default_channel")
+    bank_msb = await get_setting("default_bank_msb")
+    bank_lsb = await get_setting("default_bank_lsb")
+    program = await get_setting("default_program")
+
+    # If no defaults saved, use first port + zeros
+    if port_id is None:
+        rows = await db_fetchall("SELECT id, name FROM ports ORDER BY id LIMIT 1")
+        if rows:
+            port_id = str(rows[0]["id"])
+            port_name = rows[0]["name"]
+        else:
+            return  # No ports available
+
+        daw_slot = "0"
+        preset_slot = "0"
+        channel = "0"
+        bank_msb = "0"
+        bank_lsb = "0"
+        program = "0"
+    else:
+        # Get port name
+        port_name = await get_port_name(int(port_id))
+
+    # Set ACTIVE_SELECTION
+    ACTIVE_SELECTION["port_id"] = int(port_id)
+    ACTIVE_SELECTION["port_name"] = port_name
+    ACTIVE_SELECTION["channel"] = int(channel) if channel else 0
+    ACTIVE_SELECTION["bank_msb"] = int(bank_msb) if bank_msb else 0
+    ACTIVE_SELECTION["bank_lsb"] = int(bank_lsb) if bank_lsb else 0
+    ACTIVE_SELECTION["program"] = int(program) if program else 0
+
+    # Get or create context for these defaults
+    row = await db_fetchone(
+        """
+        SELECT id FROM contexts
+        WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
+          AND bank_msb=? AND bank_lsb=? AND program=?
+        """,
+        (
+            int(daw_slot) if daw_slot else 0,
+            int(preset_slot) if preset_slot else 0,
+            int(port_id),
+            int(channel) if channel else 0,
+            int(bank_msb) if bank_msb else 0,
+            int(bank_lsb) if bank_lsb else 0,
+            int(program) if program else 0,
+        ),
+    )
+
+    if row:
+        context_id = row["id"]
+    else:
+        # Create context
+        await db_exec(
+            """
+            INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(daw_slot) if daw_slot else 0,
+                int(preset_slot) if preset_slot else 0,
+                int(port_id),
+                int(channel) if channel else 0,
+                int(bank_msb) if bank_msb else 0,
+                int(bank_lsb) if bank_lsb else 0,
+                int(program) if program else 0,
+            ),
+        )
+        row2 = await db_fetchone("SELECT last_insert_rowid() AS id")
+        context_id = row2["id"]
+
+    # Set active_context_id
+    await set_setting("active_context_id", str(context_id))
+
+
 # -----------------------------
 # Lifecycle
 # -----------------------------
@@ -219,6 +301,7 @@ async def apply_migrations() -> None:
 async def _startup() -> None:
     await apply_migrations()
     await ensure_ports_registered()
+    await load_and_apply_defaults()
     asyncio.create_task(midi_pump())
 
 
@@ -701,6 +784,73 @@ async def keygrab_get() -> Dict[str, Any]:
 @app.post("/api/keygrab/set")
 async def keygrab_set(enabled: bool) -> Dict[str, Any]:
     await set_setting("keygrab_enabled", "true" if enabled else "false")
+    return {"ok": True, "enabled": enabled}
+
+
+@app.post("/api/defaults/save")
+async def save_defaults(ctx: ContextIn) -> Dict[str, Any]:
+    """Save current header as startup defaults."""
+    await set_setting("default_daw_slot", str(ctx.daw_slot))
+    await set_setting("default_preset_slot", str(ctx.preset_slot))
+    await set_setting("default_port_id", str(ctx.port_id))
+    await set_setting("default_channel", str(ctx.channel))
+    await set_setting("default_bank_msb", str(ctx.bank_msb))
+    await set_setting("default_bank_lsb", str(ctx.bank_lsb))
+    await set_setting("default_program", str(ctx.program))
+    return {"ok": True}
+
+
+@app.get("/api/defaults")
+async def get_defaults() -> Dict[str, Any]:
+    """Get startup defaults for header."""
+    # Try to load from settings
+    daw_slot = await get_setting("default_daw_slot")
+    preset_slot = await get_setting("default_preset_slot")
+    port_id = await get_setting("default_port_id")
+    channel = await get_setting("default_channel")
+    bank_msb = await get_setting("default_bank_msb")
+    bank_lsb = await get_setting("default_bank_lsb")
+    program = await get_setting("default_program")
+
+    # If we have saved defaults, use them
+    if port_id is not None:
+        return {
+            "daw_slot": int(daw_slot) if daw_slot else 0,
+            "preset_slot": int(preset_slot) if preset_slot else 0,
+            "port_id": int(port_id),
+            "channel": int(channel) if channel else 0,
+            "bank_msb": int(bank_msb) if bank_msb else 0,
+            "bank_lsb": int(bank_lsb) if bank_lsb else 0,
+            "program": int(program) if program else 0,
+        }
+
+    # No defaults saved, return first port + zeros
+    rows = await db_fetchall("SELECT id FROM ports ORDER BY id LIMIT 1")
+    first_port_id = rows[0]["id"] if rows else 1
+
+    return {
+        "daw_slot": 0,
+        "preset_slot": 0,
+        "port_id": first_port_id,
+        "channel": 0,
+        "bank_msb": 0,
+        "bank_lsb": 0,
+        "program": 0,
+    }
+
+
+@app.get("/api/mouse_mode")
+async def mouse_mode_get() -> Dict[str, Any]:
+    """Get mouse mode state."""
+    v = await get_setting("mouse_mode_enabled")
+    enabled = v is not None and v.lower() == "true"
+    return {"enabled": enabled}
+
+
+@app.post("/api/mouse_mode/set")
+async def mouse_mode_set(enabled: bool) -> Dict[str, Any]:
+    """Set mouse mode state."""
+    await set_setting("mouse_mode_enabled", "true" if enabled else "false")
     return {"ok": True, "enabled": enabled}
 
 

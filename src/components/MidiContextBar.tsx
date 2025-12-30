@@ -66,23 +66,49 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, []);
 
-  // Initialize default header if none
+  // Initialize header from defaults or fallback
   useEffect(() => {
     if (!ports.length) return;
     if (draft) return;
 
-    const init: ContextHeader = {
-      daw_slot: 0,
-      preset_slot: 0,
-      port_id: ports[0].id,
-      channel: 0,
-      bank_msb: 0,
-      bank_lsb: 0,
-      program: 0,
-    };
+    let alive = true;
 
-    setDraft(init);
-    onChange(init);
+    // Try to load defaults first
+    apiGet<ContextHeader>("/api/defaults")
+      .then((defaults) => {
+        if (!alive) return;
+
+        // Verify port_id exists in current ports
+        const portExists = ports.some((p) => p.id === defaults.port_id);
+        const init: ContextHeader = portExists
+          ? defaults
+          : {
+              ...defaults,
+              port_id: ports[0].id, // Fallback to first port if saved port doesn't exist
+            };
+
+        setDraft(init);
+        onChange(init);
+      })
+      .catch(() => {
+        // Fallback if defaults endpoint fails
+        if (!alive) return;
+        const init: ContextHeader = {
+          daw_slot: 0,
+          preset_slot: 0,
+          port_id: ports[0].id,
+          channel: 0,
+          bank_msb: 0,
+          bank_lsb: 0,
+          program: 0,
+        };
+        setDraft(init);
+        onChange(init);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, [ports, draft, onChange]);
 
   // Sync down from parent (rare, but safe)
@@ -141,30 +167,18 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, [draft, onContextId]);
 
-  async function onSendToDevice() {
+  async function onSaveAsDefaults() {
     if (!draft) return;
 
     setErr("");
-    setSendStatus("Sending…");
+    setSendStatus("Saving…");
 
     try {
-      const res = await apiSendContext({
-        port_id: draft.port_id,
-        channel: draft.channel,
-        bank_msb: draft.bank_msb,
-        bank_lsb: draft.bank_lsb,
-        program: draft.program,
-        daw_slot: draft.daw_slot,
-        preset_slot: draft.preset_slot,
-      });
-
-      if (!res.ok) {
-        setSendStatus(res.error ?? "Send failed.");
-      } else {
-        setSendStatus(`Sent (out: ${res.output_port ?? "auto"})`);
-      }
+      await apiPost("/api/defaults/save", draft);
+      setSendStatus("Saved as defaults");
+      setTimeout(() => setSendStatus(""), 2000);
     } catch (e: any) {
-      setSendStatus(e?.message ?? "Send failed.");
+      setSendStatus(e?.message ?? "Save failed");
     }
   }
 
@@ -303,21 +317,16 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <button
-          onClick={onSendToDevice}
+          onClick={onSaveAsDefaults}
           disabled={disabled}
-          title="Best-effort: CC0 (MSB), CC32 (LSB), then Program Change on selected channel"
+          title="Save current header values as startup defaults"
           style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #444", cursor: "pointer" }}
         >
-          Send → device
+          Save As Defaults
         </button>
 
-        {sendStatus ? <span style={{ opacity: 0.85 }}>MIDI Out: {sendStatus}</span> : null}
+        {sendStatus ? <span style={{ opacity: 0.85 }}>{sendStatus}</span> : null}
         {saveStatus ? <span style={{ opacity: 0.7 }}>{saveStatus}</span> : null}
-      </div>
-
-      <div style={{ opacity: 0.65, fontSize: 12 }}>
-        Tip: this uses the selected <b>input</b> port name to find a matching <b>output</b> port. Some devices won’t
-        reflect bank/program changes visually even if they accept the messages.
       </div>
     </div>
   );
