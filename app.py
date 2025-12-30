@@ -385,6 +385,17 @@ async def set_active_selection(sel: ContextIn) -> Dict[str, Any]:
     ACTIVE_SELECTION["bank_msb"] = int(sel.bank_msb)
     ACTIVE_SELECTION["bank_lsb"] = int(sel.bank_lsb)
     ACTIVE_SELECTION["program"] = int(sel.program)
+
+    # Update PORT_STATE to match manual selection
+    # This makes the backend "remember" manual selections as if the keyboard sent them
+    # So future MIDI messages won't override unless they're different
+    if port_name:
+        st = _get_or_create_port_state(port_name)
+        st.bank_msb = int(sel.bank_msb)
+        st.bank_lsb = int(sel.bank_lsb)
+        st.program = int(sel.program)
+        # Note: We don't update channel here because that comes from the keyboard automatically
+
     return {"ok": True, "active_selection": dict(ACTIVE_SELECTION)}
 
 
