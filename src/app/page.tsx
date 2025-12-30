@@ -7,6 +7,40 @@ import { BindingEditor } from "../components/BindingEditor";
 import { apiGet, API_BASE } from "../components/useMidiApi";
 import type { ContextHeader } from "../components/types";
 
+// Toggle switch component
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val: boolean) => void; label: string }) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+      <span style={{ fontWeight: "bold" }}>{label}:</span>
+      <div
+        onClick={() => onChange(!checked)}
+        style={{
+          width: 44,
+          height: 24,
+          borderRadius: 12,
+          background: checked ? "lime" : "#444",
+          position: "relative",
+          transition: "background 0.2s",
+          border: "1px solid #666",
+        }}
+      >
+        <div
+          style={{
+            width: 18,
+            height: 18,
+            borderRadius: "50%",
+            background: "white",
+            position: "absolute",
+            top: 2,
+            left: checked ? 22 : 2,
+            transition: "left 0.2s",
+          }}
+        />
+      </div>
+    </label>
+  );
+}
+
 type Derived = { bank_msb: number; bank_lsb: number; program: number };
 type MidiEventRaw = any;
 
@@ -66,6 +100,7 @@ export default function Home() {
 
   const [keygrab, setKeygrab] = useState<boolean>(true);
   const [mouseMode, setMouseMode] = useState<boolean>(false);
+  const [showConsole, setShowConsole] = useState<boolean>(true);
   const [events, setEvents] = useState<MidiEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -225,17 +260,11 @@ export default function Home() {
     return null;
   }, [events]);
 
-  // "armed" = header matches what’s being emitted right now (local check)
+  // "armed" = should show active colors (not greyed out)
+  // Grey out only when: (no MIDI detected AND mouse mode off) OR (keygrab off AND mouse mode off)
   const armed = useMemo(() => {
-    if (!header) return false;
-    const ch = observed.note_channel ?? observed.channel ?? null;
-    if (ch == null) return false;
-    if (ch !== header.channel) return false;
-    if (observed.derived.bank_msb !== header.bank_msb) return false;
-    if (observed.derived.bank_lsb !== header.bank_lsb) return false;
-    if (observed.derived.program !== header.program) return false;
-    return true;
-  }, [header, observed]);
+    return (observed.port_name !== null || mouseMode) && (keygrab || mouseMode);
+  }, [observed.port_name, mouseMode, keygrab]);
 
   // Load mouse mode on mount
   useEffect(() => {
@@ -327,12 +356,6 @@ export default function Home() {
         <div>
           <b>Context:</b> {contextId ?? "—"}
         </div>
-        <div>
-          <b>Keygrab:</b> <span style={{ color: keygrab ? "lime" : "tomato" }}>{keygrab ? "ON" : "OFF"}</span>
-        </div>
-        <div>
-          <b>Mouse Mode:</b> <span style={{ color: mouseMode ? "cyan" : "#888" }}>{mouseMode ? "ON" : "OFF"}</span>
-        </div>
         {liveNote != null && (
           <div>
             <b>Last pressed:</b> {liveNote} ({["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][liveNote % 12]}
@@ -340,13 +363,10 @@ export default function Home() {
           </div>
         )}
 
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <button onClick={toggleKeygrab} style={{ padding: "4px 8px", fontSize: 12 }}>
-            {keygrab ? "Stop" : "Start"} Keygrab
-          </button>
-          <button onClick={toggleMouseMode} style={{ padding: "4px 8px", fontSize: 12 }}>
-            {mouseMode ? "Disable" : "Enable"} Mouse Mode
-          </button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 12, alignItems: "center" }}>
+          <Toggle checked={keygrab} onChange={toggleKeygrab} label="Keygrab" />
+          <Toggle checked={mouseMode} onChange={toggleMouseMode} label="Mouse Mode" />
+          <Toggle checked={showConsole} onChange={setShowConsole} label="Live Console" />
         </div>
       </div>
 
@@ -371,58 +391,60 @@ export default function Home() {
         <BindingEditor contextId={contextId} selectedNote={selectedNote} onBindingsChanged={reloadBindings} />
       </div>
 
-      <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
-        <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <b>Live MIDI Console</b> (binding_match shows only when header selection matches and keygrab is enabled)
+      {showConsole && (
+        <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
+          <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <b>Live MIDI Console</b> (binding_match shows only when header selection matches and keygrab is enabled)
+            </div>
+            <div style={{ opacity: 0.8 }}>active_context_id: {contextId ?? "—"}</div>
           </div>
-          <div style={{ opacity: 0.8 }}>active_context_id: {contextId ?? "—"}</div>
+
+          <div
+            style={{
+              whiteSpace: "pre-wrap",
+              fontFamily: "monospace",
+              border: "1px solid #444",
+              padding: 12,
+              height: "40vh",
+              overflow: "auto",
+            }}
+          >
+            {events.map((e, idx) => {
+              const dch = e.derived_ch ?? e.derived;
+              const dpt = e.derived_port ?? e.derived;
+
+              const base =
+                `[${new Date(e.ts * 1000).toLocaleTimeString()}] ` +
+                `${e.port_name} → ${e.type} ` +
+                `ch=${e.channel ?? "-"} ` +
+                (e.type === "note_on" || e.type === "note_off"
+                  ? `note=${e.note} vel=${e.velocity}`
+                  : e.type === "control_change"
+                  ? `cc=${e.cc} value=${e.value}`
+                  : e.type === "pitchwheel"
+                  ? `pitch=${e.pitch}`
+                  : e.type === "program_change"
+                  ? `program=${e.program}`
+                  : "") +
+                `  derived_ch(msb=${dch.bank_msb} lsb=${dch.bank_lsb} prog=${dch.program})` +
+                `  derived_port(msb=${dpt.bank_msb} lsb=${dpt.bank_lsb} prog=${dpt.program})` +
+                `  match=${e.context_match ? "Y" : "N"}`;
+
+              const match = e.binding_match
+                ? `\n    BINDING: trig_type=${e.binding_match.trig_type} note=${e.binding_match.note} cc=${e.binding_match.cc}\n    CMD: ${e.binding_match.command}`
+                : "";
+
+              return (
+                <div key={idx}>
+                  {base}
+                  {match}
+                </div>
+              );
+            })}
+          </div>
         </div>
-
-        <div
-          style={{
-            whiteSpace: "pre-wrap",
-            fontFamily: "monospace",
-            border: "1px solid #444",
-            padding: 12,
-            height: "40vh",
-            overflow: "auto",
-          }}
-        >
-          {events.map((e, idx) => {
-            const dch = e.derived_ch ?? e.derived;
-            const dpt = e.derived_port ?? e.derived;
-
-            const base =
-              `[${new Date(e.ts * 1000).toLocaleTimeString()}] ` +
-              `${e.port_name} → ${e.type} ` +
-              `ch=${e.channel ?? "-"} ` +
-              (e.type === "note_on" || e.type === "note_off"
-                ? `note=${e.note} vel=${e.velocity}`
-                : e.type === "control_change"
-                ? `cc=${e.cc} value=${e.value}`
-                : e.type === "pitchwheel"
-                ? `pitch=${e.pitch}`
-                : e.type === "program_change"
-                ? `program=${e.program}`
-                : "") +
-              `  derived_ch(msb=${dch.bank_msb} lsb=${dch.bank_lsb} prog=${dch.program})` +
-              `  derived_port(msb=${dpt.bank_msb} lsb=${dpt.bank_lsb} prog=${dpt.program})` +
-              `  match=${e.context_match ? "Y" : "N"}`;
-
-            const match = e.binding_match
-              ? `\n    BINDING: trig_type=${e.binding_match.trig_type} note=${e.binding_match.note} cc=${e.binding_match.cc}\n    CMD: ${e.binding_match.command}`
-              : "";
-
-            return (
-              <div key={idx}>
-                {base}
-                {match}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

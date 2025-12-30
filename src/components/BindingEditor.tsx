@@ -167,10 +167,9 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button disabled={!canAct} onClick={getExisting}>Get</button>
         <button disabled={!canAct} onClick={setBinding}>Save</button>
         <button disabled={!canAct} onClick={removeBinding}>Remove</button>
-        <button disabled={bindingId === null} onClick={testRun}>Test Run</button>
+        <button disabled={bindingId === null} onClick={testRun}>Run Now</button>
       </div>
 
       <label style={{ display: "block", marginBottom: 8 }}>
