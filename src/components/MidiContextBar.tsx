@@ -407,7 +407,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
                     `D${ctx.daw_slot} P${ctx.preset_slot} Port${ctx.port_id} Ch${ctx.channel + 1} M${ctx.bank_msb} L${ctx.bank_lsb} Prg${ctx.program}`;
                   return (
                     <option key={ctx.id} value={ctx.id}>
-                      {label} ({ctx.binding_count} bindings)
+                      {label} ({ctx.binding_count} binding{ctx.binding_count !== 1 ? "s" : ""}, ch {ctx.channel + 1})
                     </option>
                   );
                 })}
@@ -441,10 +441,11 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       </div>
 
       {/* Show current context status */}
-      {currentContextId !== null && (
+      {currentContextId !== null && draft && (
         <div style={{ fontSize: "11px", opacity: 0.7, padding: "4px 8px" }}>
           Current: {contextLabel || `Context #${currentContextId} (no label)`}
-          {currentContext && ` • ${currentContext.binding_count} binding(s)`}
+          {currentContext && ` • ${currentContext.binding_count} binding${currentContext.binding_count !== 1 ? "s" : ""}`}
+          {` • ch ${draft.channel + 1}`}
         </div>
       )}
 
