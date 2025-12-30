@@ -1,18 +1,31 @@
 # app.py
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiosqlite
 import mido
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from dotenv import load_dotenv
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-DB_PATH = "/home/andy/projects/midi-mapper/midi_map.db"
-WS_POLL_INTERVAL = 0.01
+# -----------------------------
+# Env / config
+# -----------------------------
+# Load .env from the same directory as app.py (safe if missing)
+load_dotenv(dotenv_path=Path(__file__).resolve().with_name(".env"))
+
+DB_PATH = os.environ.get("MIDI_MAPPER_DB_PATH") or str(Path(__file__).resolve().with_name("midi_map.db"))
+WS_POLL_INTERVAL = float(os.environ.get("MIDI_MAPPER_WS_POLL_INTERVAL", "0.01"))
+MAX_NOTE = int(os.environ.get("MIDI_MAPPER_MAX_NOTE", "127"))
+
+CORS_ORIGINS = os.environ.get("MIDI_MAPPER_CORS_ORIGINS", "*")
+ALLOW_ORIGINS = ["*"] if CORS_ORIGINS.strip() == "*" else [s.strip() for s in CORS_ORIGINS.split(",") if s.strip()]
 
 # -----------------------------
 # Models (match your UI header)
@@ -25,6 +38,11 @@ class ContextIn(BaseModel):
     bank_msb: int = 0
     bank_lsb: int = 0
     program: int = 0
+
+
+class SendContextIn(ContextIn):
+    # Optional explicit output selection (recommended)
+    output_name: Optional[str] = None
 
 
 class BindingIn(BaseModel):
@@ -42,8 +60,16 @@ class BindingIn(BaseModel):
     require_armed: int = 1
 
 
+class OutputSelectIn(BaseModel):
+    output_name: str
+
+
+class ActiveContextSetIn(BaseModel):
+    context_id: int
+
+
 # -----------------------------
-# MIDI derived state tracking
+# State
 # -----------------------------
 @dataclass
 class ChanState:
@@ -57,6 +83,9 @@ CHAN_STATE: Dict[Tuple[str, int], ChanState] = {}
 
 # Per port state (last seen bank/prog regardless of channel): port_name -> ChanState
 PORT_STATE: Dict[str, ChanState] = {}
+
+# Output port cache for sending state back to the device
+OUTPUT_PORT_CACHE: Dict[str, Any] = {}
 
 # Track last NOTE channel separately (so top bar can show keys channel even if knobs are ch=0)
 LAST_NOTE_CHANNEL: Dict[str, int] = {}
@@ -79,11 +108,11 @@ app = FastAPI(title="MIDI Mapper Bridge")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_credentials=True,
+    allow_origins=ALLOW_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # -----------------------------
 # DB helpers
@@ -107,13 +136,10 @@ async def db_fetchone(sql: str, params: tuple = ()) -> Optional[aiosqlite.Row]:
 
 
 async def ensure_ports_registered() -> None:
-    """Sync mido input port names into ports table."""
-    ports = mido.get_input_names()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("BEGIN")
-        for name in ports:
-            await db.execute("INSERT OR IGNORE INTO ports(name) VALUES (?)", (name,))
-        await db.commit()
+    # Register all visible INPUT ports in DB (UI selects from this list).
+    names = mido.get_input_names()
+    for name in names:
+        await db_exec("INSERT OR IGNORE INTO ports(name) VALUES (?)", (name,))
 
 
 async def get_port_name(port_id: int) -> Optional[str]:
@@ -124,55 +150,100 @@ async def get_port_name(port_id: int) -> Optional[str]:
 # -----------------------------
 # Settings helpers
 # -----------------------------
-async def get_active_context_id() -> Optional[int]:
-    row = await db_fetchone("SELECT value FROM settings WHERE key='active_context_id'")
-    if not row:
-        return None
-    v = row["value"]
-    return int(v) if isinstance(v, str) and v.isdigit() else None
-
-
 async def set_setting(key: str, value: str) -> None:
     await db_exec(
         """
-        INSERT INTO settings(key, value) VALUES(?, ?)
+        INSERT INTO settings(key, value)
+        VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value
         """,
         (key, value),
     )
 
 
-async def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+async def get_setting(key: str) -> Optional[str]:
     row = await db_fetchone("SELECT value FROM settings WHERE key=?", (key,))
     if not row:
-        return default
-    return row["value"]
+        return None
+    v = row["value"]
+    return v if isinstance(v, str) else None
+
+
+async def get_active_context_id() -> Optional[int]:
+    v = await get_setting("active_context_id")
+    if not v:
+        return None
+    return int(v) if v.isdigit() else None
 
 
 # -----------------------------
-# REST endpoints
+# Lifecycle
 # -----------------------------
 @app.on_event("startup")
-async def startup() -> None:
+async def _startup() -> None:
     await ensure_ports_registered()
+    asyncio.create_task(midi_pump())
 
 
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    # Close cached output ports cleanly
+    for name, out in list(OUTPUT_PORT_CACHE.items()):
+        try:
+            out.close()
+        except Exception:
+            pass
+        OUTPUT_PORT_CACHE.pop(name, None)
+
+
+# -----------------------------
+# API
+# -----------------------------
 @app.get("/api/ports")
-async def get_ports() -> List[Dict[str, Any]]:
-    await ensure_ports_registered()
-    rows = await db_fetchall("SELECT id, name FROM ports ORDER BY id")
+async def list_ports() -> List[Dict[str, Any]]:
+    rows = await db_fetchall("SELECT id, name FROM ports ORDER BY name")
     return [{"id": r["id"], "name": r["name"]} for r in rows]
 
 
+@app.get("/api/capabilities")
+async def capabilities() -> Dict[str, Any]:
+    return {
+        "max_note": MAX_NOTE,
+        "input_ports": mido.get_input_names(),
+        "output_ports": mido.get_output_names(),
+    }
+
+
+@app.get("/api/midi/outputs")
+async def midi_outputs() -> Dict[str, Any]:
+    preferred = await get_setting("preferred_output_port")
+    return {"outputs": mido.get_output_names(), "preferred_output_port": preferred}
+
+
+@app.post("/api/midi/output/select")
+async def midi_output_select(payload: OutputSelectIn) -> Dict[str, Any]:
+    out_names = mido.get_output_names()
+    if payload.output_name not in out_names:
+        return {"ok": False, "error": "Unknown output_name", "available": out_names}
+    await set_setting("preferred_output_port", payload.output_name)
+    return {"ok": True, "preferred_output_port": payload.output_name}
+
+
 @app.post("/api/active_context/set")
-async def set_active_context(context_id: int) -> Dict[str, Any]:
-    await set_setting("active_context_id", str(context_id))
-    return {"ok": True, "active_context_id": context_id}
+async def set_active_context(
+    # Backwards compatible: allow either JSON body or query param
+    payload: Optional[ActiveContextSetIn] = Body(default=None),
+    context_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    cid = payload.context_id if payload is not None else context_id
+    if cid is None:
+        return {"ok": False, "error": "Missing context_id"}
+    await set_setting("active_context_id", str(cid))
+    return {"ok": True, "active_context_id": cid}
 
 
 @app.post("/api/active_selection/set")
 async def set_active_selection(sel: ContextIn) -> Dict[str, Any]:
-    # Store selection in memory for fast match gating in the pump
     port_name = await get_port_name(sel.port_id)
     ACTIVE_SELECTION["port_id"] = sel.port_id
     ACTIVE_SELECTION["port_name"] = port_name
@@ -181,6 +252,89 @@ async def set_active_selection(sel: ContextIn) -> Dict[str, Any]:
     ACTIVE_SELECTION["bank_lsb"] = int(sel.bank_lsb)
     ACTIVE_SELECTION["program"] = int(sel.program)
     return {"ok": True, "active_selection": dict(ACTIVE_SELECTION)}
+
+
+def _guess_output_from_input_name(input_port_name: str, out_names: List[str]) -> Optional[str]:
+    # Exact match first
+    if input_port_name in out_names:
+        return input_port_name
+    # Substring match
+    for n in out_names:
+        if input_port_name in n:
+            return n
+    # Last resort: try shared prefix token (often "Oxygen Pro 61")
+    token = input_port_name.split("USB MIDI")[0].strip()
+    if token:
+        for n in out_names:
+            if token in n:
+                return n
+    return None
+
+
+@app.post("/api/midi/send_context")
+async def midi_send_context(ctx: SendContextIn) -> Dict[str, Any]:
+    """Attempt to push the selected channel/bank/program back to the controller.
+
+    Best-effort send:
+      - CC 0 (Bank Select MSB)
+      - CC 32 (Bank Select LSB)
+      - Program Change
+
+    IMPORTANT: Many controllers won't visibly update their UI even if they accept the messages.
+    """
+    port_name = await get_port_name(ctx.port_id)
+    if not port_name:
+        return {"ok": False, "error": "Unknown port_id"}
+
+    out_names = mido.get_output_names()
+    preferred = await get_setting("preferred_output_port")
+
+    out_name: Optional[str] = None
+
+    # Priority:
+    # 1) explicit ctx.output_name (from UI)
+    # 2) settings preferred_output_port
+    # 3) guess based on input port name
+    if ctx.output_name:
+        if ctx.output_name not in out_names:
+            return {"ok": False, "error": "Unknown output_name", "available": out_names}
+        out_name = ctx.output_name
+    elif preferred and preferred in out_names:
+        out_name = preferred
+    else:
+        out_name = _guess_output_from_input_name(port_name, out_names)
+
+    if not out_name:
+        return {
+            "ok": False,
+            "error": f"No matching MIDI output port (input='{port_name}', preferred='{preferred}')",
+            "available": out_names,
+        }
+
+    ch = int(ctx.channel)
+    msb = int(ctx.bank_msb)
+    lsb = int(ctx.bank_lsb)
+    prog = int(ctx.program)
+
+    sent = [
+        {"type": "control_change", "channel": ch, "control": 0, "value": msb},
+        {"type": "control_change", "channel": ch, "control": 32, "value": lsb},
+        {"type": "program_change", "channel": ch, "program": prog},
+    ]
+
+    try:
+        out = OUTPUT_PORT_CACHE.get(out_name)
+        if out is None:
+            out = mido.open_output(out_name)
+            OUTPUT_PORT_CACHE[out_name] = out
+
+        out.send(mido.Message("control_change", channel=ch, control=0, value=msb))
+        out.send(mido.Message("control_change", channel=ch, control=32, value=lsb))
+        out.send(mido.Message("program_change", channel=ch, program=prog))
+
+        return {"ok": True, "output_port": out_name, "sent": sent, "preferred_output_port": preferred}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "output_port": out_name, "sent": sent}
 
 
 @app.post("/api/contexts/get_or_create")
@@ -219,32 +373,13 @@ async def get_or_create_context(ctx: ContextIn) -> Dict[str, Any]:
             ctx.program,
         ),
     )
-
-    row2 = await db_fetchone(
-        """
-        SELECT id FROM contexts
-        WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
-          AND bank_msb=? AND bank_lsb=? AND program=?
-        """,
-        (
-            ctx.daw_slot,
-            ctx.preset_slot,
-            ctx.port_id,
-            ctx.channel,
-            ctx.bank_msb,
-            ctx.bank_lsb,
-            ctx.program,
-        ),
-    )
+    row2 = await db_fetchone("SELECT last_insert_rowid() AS id")
     return {"context_id": row2["id"]}
 
 
 @app.get("/api/contexts/{context_id}/bindings")
-async def get_bindings(context_id: int) -> List[Dict[str, Any]]:
-    rows = await db_fetchall(
-        "SELECT * FROM bindings WHERE context_id=? ORDER BY trig_type, note, cc",
-        (context_id,),
-    )
+async def list_bindings(context_id: int) -> List[Dict[str, Any]]:
+    rows = await db_fetchall("SELECT * FROM bindings WHERE context_id=? ORDER BY id", (context_id,))
     return [dict(r) for r in rows]
 
 
@@ -312,11 +447,10 @@ async def settings_set(key: str, value: str) -> Dict[str, Any]:
     return {"ok": True}
 
 
-# Keygrab state (UI toggle)
 @app.get("/api/keygrab")
 async def keygrab_get() -> Dict[str, Any]:
-    v = await get_setting("keygrab_enabled", "true")
-    enabled = str(v).lower() in ("1", "true", "yes", "y", "on")
+    v = await get_setting("keygrab_enabled")
+    enabled = True if v is None else (v.lower() == "true")
     return {"enabled": enabled}
 
 
@@ -329,6 +463,14 @@ async def keygrab_set(enabled: bool) -> Dict[str, Any]:
 # -----------------------------
 # Matching helpers
 # -----------------------------
+def effective_channel(port_name: str, msg: mido.Message) -> int:
+    """Treat last note channel as 'current' for non-note messages (Oxygen-style)."""
+    ch = int(getattr(msg, "channel", 0))
+    if msg.type in ("note_on", "note_off"):
+        return ch
+    return int(LAST_NOTE_CHANNEL.get(port_name, ch))
+
+
 def _get_or_create_chan_state(port_name: str, ch: int) -> ChanState:
     key = (port_name, ch)
     st = CHAN_STATE.get(key)
@@ -351,9 +493,7 @@ def update_state(port_name: str, msg: mido.Message) -> Dict[str, Any]:
     Updates both:
       - per-channel state (strict)
       - per-port last-seen state (useful when device sends bank/program on a different channel)
-    Returns a pack that includes:
-      - derived (flat) for UI
-      - derived_ch and derived_port for debug
+    Returns derived (flat), derived_ch, derived_port for debug.
     """
     ch = getattr(msg, "channel", 0)
     st_ch = _get_or_create_chan_state(port_name, ch)
@@ -371,9 +511,7 @@ def update_state(port_name: str, msg: mido.Message) -> Dict[str, Any]:
     apply(st_ch)
     apply(st_port)
 
-    # Use port-level as the primary "derived" so it "sticks" across channels
     derived_flat = {"bank_msb": st_port.bank_msb, "bank_lsb": st_port.bank_lsb, "program": st_port.program}
-
     return {
         "derived": derived_flat,
         "derived_ch": {"bank_msb": st_ch.bank_msb, "bank_lsb": st_ch.bank_lsb, "program": st_ch.program},
@@ -386,7 +524,7 @@ def selection_matches_event(port_name: str, msg: mido.Message, derived_flat: Dic
     if sel_port and sel_port != port_name:
         return False
 
-    ch = getattr(msg, "channel", 0)
+    ch = effective_channel(port_name, msg)
     if ch != int(ACTIVE_SELECTION.get("channel", 0)):
         return False
 
@@ -433,19 +571,18 @@ ws_mgr = WSManager()
 
 
 async def midi_pump() -> None:
-    """
-    Background task: open all input ports and publish messages.
-    Note: if mido.get_input_names() only returns one port on your system,
-    that’s a backend/rtmidi visibility issue, not this loop.
-    """
-    port_names = mido.get_input_names()
-    inputs = [mido.open_input(name) for name in port_names]
-
+    inputs: List[mido.ports.BaseInput] = []
     try:
+        # Open all input ports that exist at startup
+        for name in mido.get_input_names():
+            try:
+                inputs.append(mido.open_input(name))
+            except Exception:
+                continue
+
         while True:
-            # Check keygrab each loop (cheap and keeps UI toggle responsive)
-            keygrab_val = await get_setting("keygrab_enabled", "true")
-            keygrab_enabled = str(keygrab_val).lower() in ("1", "true", "yes", "y", "on")
+            v = await get_setting("keygrab_enabled")
+            keygrab_enabled = True if v is None else (v.lower() == "true")
 
             for inp in inputs:
                 for msg in inp.iter_pending():
@@ -453,10 +590,7 @@ async def midi_pump() -> None:
                     if msg.type in ("note_on", "note_off"):
                         LAST_NOTE_CHANNEL[inp.name] = getattr(msg, "channel", 0)
 
-                    # Update derived state pack
                     pack = update_state(inp.name, msg)
-
-                    # Compute match against active selection (what UI header says)
                     ctx_match = selection_matches_event(inp.name, msg, pack["derived"])
 
                     payload: Dict[str, Any] = {
@@ -464,73 +598,58 @@ async def midi_pump() -> None:
                         "port_name": inp.name,
                         "type": msg.type,
                         "channel": getattr(msg, "channel", None),
+                        "effective_channel": effective_channel(inp.name, msg),
                         "note": getattr(msg, "note", None),
                         "velocity": getattr(msg, "velocity", None),
                         "cc": getattr(msg, "control", None),
                         "value": getattr(msg, "value", None),
                         "pitch": getattr(msg, "pitch", None),
                         "program": getattr(msg, "program", None),
-
-                        # Flat derived for UI compatibility
                         "derived": pack["derived"],
                         "derived_ch": pack["derived_ch"],
                         "derived_port": pack["derived_port"],
-
-                        # Match gating + extra observed info
                         "context_match": ctx_match,
                         "observed_note_channel": LAST_NOTE_CHANNEL.get(inp.name),
-
-                        # Expose keygrab state (optional, useful for UI)
                         "keygrab_enabled": keygrab_enabled,
+                        "max_note": MAX_NOTE,
                     }
 
-                    # Binding lookup uses ACTIVE CONTEXT ID (contextId in UI), not ACTIVE_SELECTION
                     ctx_id = await get_active_context_id()
                     payload["active_context_id"] = ctx_id
 
                     binding = None
-                    if ctx_id is not None and keygrab_enabled:
-                        # Only try to match bindings if header selection matches the event.
-                        # This keeps console clean and avoids “wrong mode” triggers.
-                        if ctx_match:
-                            if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
-                                binding = await db_fetchone(
-                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=1 AND note=? AND enabled=1",
-                                    (ctx_id, msg.note),
-                                )
-                            elif msg.type == "control_change":
-                                binding = await db_fetchone(
-                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=2 AND cc=? AND enabled=1",
-                                    (ctx_id, msg.control),
-                                )
-                            elif msg.type == "pitchwheel":
-                                binding = await db_fetchone(
-                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=3 AND enabled=1 LIMIT 1",
-                                    (ctx_id,),
-                                )
-                            elif msg.type == "program_change":
-                                binding = await db_fetchone(
-                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=4 AND enabled=1",
-                                    (ctx_id,),
-                                )
+                    if ctx_id is not None and keygrab_enabled and ctx_match:
+                        if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+                            binding = await db_fetchone(
+                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=1 AND note=? AND enabled=1",
+                                (ctx_id, msg.note),
+                            )
+                        elif msg.type == "control_change":
+                            binding = await db_fetchone(
+                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=2 AND cc=? AND enabled=1",
+                                (ctx_id, msg.control),
+                            )
+                        elif msg.type == "pitchwheel":
+                            binding = await db_fetchone(
+                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=3 AND enabled=1 LIMIT 1",
+                                (ctx_id,),
+                            )
+                        elif msg.type == "program_change":
+                            binding = await db_fetchone(
+                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=4 AND enabled=1 LIMIT 1",
+                                (ctx_id,),
+                            )
 
                     payload["binding_match"] = dict(binding) if binding else None
-
                     await ws_mgr.broadcast(payload)
 
             await asyncio.sleep(WS_POLL_INTERVAL)
-
     finally:
-        for i in inputs:
+        for inp in inputs:
             try:
-                i.close()
+                inp.close()
             except Exception:
                 pass
-
-
-@app.on_event("startup")
-async def start_midi_task() -> None:
-    asyncio.create_task(midi_pump())
 
 
 @app.websocket("/ws/events")
@@ -538,8 +657,7 @@ async def ws_events(ws: WebSocket) -> None:
     await ws_mgr.connect(ws)
     try:
         while True:
-            # Keepalive; client can send "ping"
-            await ws.receive_text()
+            await ws.receive_text()  # keepalive; client can send "ping"
     except WebSocketDisconnect:
         ws_mgr.disconnect(ws)
     except Exception:
