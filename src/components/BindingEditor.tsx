@@ -123,14 +123,20 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
         notify_emoji: notifyEmoji.slice(0, 8), // Limit emoji to 8 chars
       };
 
-      await apiPost("/api/bindings/set", payload);
+      const response = await apiPost<{ binding_id?: number }>("/api/bindings/set", payload);
 
-      // Give the backend a moment to persist
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // If this was a new binding, get the ID from the response
+      if (response?.binding_id && !bindingId) {
+        setBindingId(response.binding_id);
+      }
 
-      // Reload the binding to get the ID and verify it saved
-      await getExisting();
+      // Update the parent's binding list
       onBindingsChanged();
+
+      setStatus("Saved successfully!");
+
+      // Clear status after a moment
+      setTimeout(() => setStatus(""), 2000);
     } catch (err) {
       setStatus(`Save failed: ${err}`);
     }
