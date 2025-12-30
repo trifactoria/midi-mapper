@@ -177,7 +177,7 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
         <input
           value={command}
           onChange={(e) => setCommand(e.target.value)}
-          placeholder="e.g. ./scripts/my-command"
+          placeholder="e.g. firefox 'google.com'"
           style={{ width: "100%", padding: 8, marginTop: 4 }}
         />
       </label>

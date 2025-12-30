@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS bindings (
   debounce_ms INTEGER NOT NULL DEFAULT 200,
   require_armed INTEGER NOT NULL DEFAULT 1,
 
+  -- Binding metadata (from migration 002)
+  notes TEXT NOT NULL DEFAULT '',
+  notify_text TEXT NOT NULL DEFAULT '',
+  notify_emoji TEXT NOT NULL DEFAULT '',
+
   UNIQUE(context_id, trig_type, note, cc)
 );
 
@@ -45,4 +50,5 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+-- Defaults
 INSERT OR IGNORE INTO settings(key, value) VALUES ('armed', '0');

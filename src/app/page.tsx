@@ -406,7 +406,7 @@ export default function Home() {
               fontFamily: "monospace",
               border: "1px solid #444",
               padding: 12,
-              height: "40vh",
+              height: "20vh",
               overflow: "auto",
             }}
           >
