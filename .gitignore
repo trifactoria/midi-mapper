@@ -26,6 +26,10 @@ bin/
 lib/
 include/
 
+# Secret envs
+.env
+.env.local
+.env.*.local
 
 # IDE specific files (optional, uncomment as needed)
 .vscode/

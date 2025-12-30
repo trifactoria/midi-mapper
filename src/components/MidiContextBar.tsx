@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { apiGet, apiPost } from "./useMidiApi";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { apiGet, apiPost, apiSendContext } from "./useMidiApi";
 import type { ContextHeader, Port } from "./types";
-
-function clampInt(v: number, lo: number, hi: number) {
-  if (!Number.isFinite(v)) return lo;
-  return Math.max(lo, Math.min(hi, Math.trunc(v)));
-}
 
 type Props = {
   value: ContextHeader | null;
   onChange: (v: ContextHeader) => void;
   onContextId: (contextId: number) => void;
 };
+
+function clampInt(v: number, lo: number, hi: number) {
+  if (!Number.isFinite(v)) return lo;
+  return Math.max(lo, Math.min(hi, Math.trunc(v)));
+}
 
 function sameHeader(a: ContextHeader, b: ContextHeader) {
   return (
@@ -27,20 +27,46 @@ function sameHeader(a: ContextHeader, b: ContextHeader) {
   );
 }
 
+function range(n: number) {
+  return Array.from({ length: n }, (_, i) => i);
+}
+
 export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [ports, setPorts] = useState<Port[]>([]);
   const [err, setErr] = useState<string>("");
 
+  // Local draft (controlled-ish)
   const [draft, setDraft] = useState<ContextHeader | null>(value);
-  const debounceRef = useRef<number | null>(null);
 
+  // Status UI
+  const [saveStatus, setSaveStatus] = useState<string>("");
+  const [sendStatus, setSendStatus] = useState<string>("");
+
+  const debounceRef = useRef<number | null>(null);
+  const lastContextKeyRef = useRef<string>("");
+
+  // Options (these match your device constraints / typical MIDI)
+  const dawOptions = useMemo(() => range(12), []); // 0..11
+  const presetOptions = useMemo(() => range(16), []); // 0..15
+  const channelOptions = useMemo(() => range(16), []); // 0..15
+  const midi7bitOptions = useMemo(() => range(128), []); // 0..127
+
+  // Load ports
   useEffect(() => {
+    let alive = true;
     apiGet<Port[]>("/api/ports")
-      .then(setPorts)
-      .catch((e) => setErr(String(e)));
+      .then((p) => {
+        if (!alive) return;
+        setPorts(p);
+        setErr("");
+      })
+      .catch((e) => alive && setErr(String(e)));
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // init default if none
+  // Initialize default header if none
   useEffect(() => {
     if (!ports.length) return;
     if (draft) return;
@@ -59,133 +85,240 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     onChange(init);
   }, [ports, draft, onChange]);
 
-  // sync from parent if parent changes it (rare, but safe)
+  // Sync down from parent (rare, but safe)
   useEffect(() => {
     if (!value) return;
-    if (!draft || !sameHeader(value, draft)) {
-      setDraft(value);
-    }
+    if (!draft || !sameHeader(value, draft)) setDraft(value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  // whenever draft changes:
-  // 1) push active_selection to backend (match gating)
-  // 2) debounced get_or_create context_id
+  const updateDraft = (patch: Partial<ContextHeader>) => {
+    if (!draft) return;
+    const next: ContextHeader = { ...draft, ...patch };
+    setDraft(next);
+    onChange(next);
+  };
+
+  const contextKey = (h: ContextHeader) =>
+    `${h.daw_slot}|${h.preset_slot}|${h.port_id}|${h.channel}|${h.bank_msb}|${h.bank_lsb}|${h.program}`;
+
+  // Push active selection + debounce context lookup
   useEffect(() => {
     if (!draft) return;
 
+    setSaveStatus("Syncing…");
+    setErr("");
+
+    // 1) Always push active_selection (match gating)
     apiPost("/api/active_selection/set", draft).catch((e) => setErr(String(e)));
 
+    // 2) Debounced get_or_create => context_id
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
+
     debounceRef.current = window.setTimeout(() => {
+      const key = contextKey(draft);
+
+      // Avoid spamming if nothing actually changed
+      if (lastContextKeyRef.current === key) {
+        setSaveStatus("");
+        return;
+      }
+      lastContextKeyRef.current = key;
+
       apiPost<{ context_id: number }>("/api/contexts/get_or_create", draft)
-        .then((r) => onContextId(r.context_id))
-        .catch((e) => setErr(String(e)));
-    }, 120);
+        .then((r) => {
+          onContextId(r.context_id);
+          setSaveStatus(`Context: ${r.context_id}`);
+        })
+        .catch((e) => {
+          setErr(String(e));
+          setSaveStatus("");
+        });
+    }, 150);
 
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
   }, [draft, onContextId]);
 
+  async function onSendToDevice() {
+    if (!draft) return;
+
+    setErr("");
+    setSendStatus("Sending…");
+
+    try {
+      const res = await apiSendContext({
+        port_id: draft.port_id,
+        channel: draft.channel,
+        bank_msb: draft.bank_msb,
+        bank_lsb: draft.bank_lsb,
+        program: draft.program,
+        daw_slot: draft.daw_slot,
+        preset_slot: draft.preset_slot,
+      });
+
+      if (!res.ok) {
+        setSendStatus(res.error ?? "Send failed.");
+      } else {
+        setSendStatus(`Sent (out: ${res.output_port ?? "auto"})`);
+      }
+    } catch (e: any) {
+      setSendStatus(e?.message ?? "Send failed.");
+    }
+  }
+
   if (!draft) return <div style={{ padding: 12 }}>Loading ports…</div>;
 
-  const setField = (k: keyof ContextHeader, n: number) => {
-    const next: ContextHeader = { ...draft, [k]: n };
-    setDraft(next);
-    onChange(next);
-  };
+  const disabled = !ports.length;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(120px, 1fr))", gap: 8 }}>
-      {err ? <div style={{ gridColumn: "1 / -1", color: "tomato" }}>{err}</div> : null}
+    <div style={{ display: "grid", gap: 10 }}>
+      {err ? (
+        <div style={{ padding: 10, border: "1px solid tomato", color: "tomato", borderRadius: 8 }}>
+          {err}
+        </div>
+      ) : null}
 
-      <label>
-        DAW
-        <input
-          type="number"
-          value={draft.daw_slot}
-          min={0}
-          max={11}
-          onChange={(e) => setField("daw_slot", clampInt(Number(e.target.value), 0, 11))}
-          style={{ width: "100%" }}
-        />
-      </label>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, minmax(120px, 1fr))",
+          gap: 8,
+          alignItems: "end",
+        }}
+      >
+        <label style={{ display: "grid", gap: 4 }}>
+          DAW
+          <select
+            value={draft.daw_slot}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ daw_slot: clampInt(Number(e.target.value), 0, 11) })}
+            style={{ width: "100%" }}
+          >
+            {dawOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
 
-      <label>
-        Preset
-        <input
-          type="number"
-          value={draft.preset_slot}
-          min={0}
-          max={15}
-          onChange={(e) => setField("preset_slot", clampInt(Number(e.target.value), 0, 15))}
-          style={{ width: "100%" }}
-        />
-      </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          Preset
+          <select
+            value={draft.preset_slot}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ preset_slot: clampInt(Number(e.target.value), 0, 15) })}
+            style={{ width: "100%" }}
+          >
+            {presetOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
 
-      <label>
-        Port
-        <select
-          value={draft.port_id}
-          onChange={(e) => setField("port_id", Number(e.target.value))}
-          style={{ width: "100%" }}
+        <label style={{ display: "grid", gap: 4 }}>
+          Port
+          <select
+            value={draft.port_id}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ port_id: Number(e.target.value) })}
+            style={{ width: "100%" }}
+          >
+            {ports.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.id}: {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: "grid", gap: 4 }}>
+          Ch
+          <select
+            value={draft.channel}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ channel: clampInt(Number(e.target.value), 0, 15) })}
+            style={{ width: "100%" }}
+          >
+            {channelOptions.map((n) => (
+              <option key={n} value={n}>
+                {n + 1} (ch {n})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: "grid", gap: 4 }}>
+          MSB
+          <select
+            value={draft.bank_msb}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ bank_msb: clampInt(Number(e.target.value), 0, 127) })}
+            style={{ width: "100%" }}
+          >
+            {midi7bitOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: "grid", gap: 4 }}>
+          LSB
+          <select
+            value={draft.bank_lsb}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ bank_lsb: clampInt(Number(e.target.value), 0, 127) })}
+            style={{ width: "100%" }}
+          >
+            {midi7bitOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: "grid", gap: 4 }}>
+          Program
+          <select
+            value={draft.program}
+            disabled={disabled}
+            onChange={(e) => updateDraft({ program: clampInt(Number(e.target.value), 0, 127) })}
+            style={{ width: "100%" }}
+          >
+            {midi7bitOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <button
+          onClick={onSendToDevice}
+          disabled={disabled}
+          title="Best-effort: CC0 (MSB), CC32 (LSB), then Program Change on selected channel"
+          style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #444", cursor: "pointer" }}
         >
-          {ports.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.id}: {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          Send → device
+        </button>
 
-      <label>
-        Ch
-        <input
-          type="number"
-          value={draft.channel}
-          min={0}
-          max={15}
-          onChange={(e) => setField("channel", clampInt(Number(e.target.value), 0, 15))}
-          style={{ width: "100%" }}
-        />
-      </label>
+        {sendStatus ? <span style={{ opacity: 0.85 }}>MIDI Out: {sendStatus}</span> : null}
+        {saveStatus ? <span style={{ opacity: 0.7 }}>{saveStatus}</span> : null}
+      </div>
 
-      <label>
-        MSB
-        <input
-          type="number"
-          value={draft.bank_msb}
-          min={0}
-          max={127}
-          onChange={(e) => setField("bank_msb", clampInt(Number(e.target.value), 0, 127))}
-          style={{ width: "100%" }}
-        />
-      </label>
-
-      <label>
-        LSB
-        <input
-          type="number"
-          value={draft.bank_lsb}
-          min={0}
-          max={127}
-          onChange={(e) => setField("bank_lsb", clampInt(Number(e.target.value), 0, 127))}
-          style={{ width: "100%" }}
-        />
-      </label>
-
-      <label>
-        Program
-        <input
-          type="number"
-          value={draft.program}
-          min={0}
-          max={127}
-          onChange={(e) => setField("program", clampInt(Number(e.target.value), 0, 127))}
-          style={{ width: "100%" }}
-        />
-      </label>
+      <div style={{ opacity: 0.65, fontSize: 12 }}>
+        Tip: this uses the selected <b>input</b> port name to find a matching <b>output</b> port. Some devices won’t
+        reflect bank/program changes visually even if they accept the messages.
+      </div>
     </div>
   );
 }
