@@ -51,6 +51,8 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
           return;
         }
 
+        console.log("Loaded binding from DB:", JSON.stringify(match, null, 2));
+
         setCommand(match.command ?? "");
         setDebounceMs(match.debounce_ms ?? 200);
         setRequireArmed(match.require_armed ?? 1);
@@ -128,7 +130,11 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
         payload.id = bindingId;
       }
 
+      console.log("Saving binding with payload:", JSON.stringify(payload, null, 2));
+
       const response = await apiPost<{ binding_id?: number }>("/api/bindings/set", payload);
+
+      console.log("Save response:", response);
 
       // If this was a new binding, get the ID from the response
       if (response?.binding_id && !bindingId) {
