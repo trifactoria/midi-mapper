@@ -3,7 +3,7 @@
 import React from "react";
 
 type Props = {
-  boundNotes: Set<number>;
+  boundMarkers: Map<number, string>; // note -> emoji/marker (default "•")
   selectedNote: number | null;
   onSelect: (note: number) => void;
 
@@ -40,7 +40,7 @@ function noteName(note: number) {
 }
 
 export function NoteGrid({
-  boundNotes,
+  boundMarkers,
   selectedNote,
   onSelect,
   pressedNote,
@@ -99,7 +99,8 @@ export function NoteGrid({
           if (note > hi) return <div key={idx} />;
 
           const black = isBlackKey(note);
-          const isBound = boundNotes.has(note);
+          const marker = boundMarkers.get(note);
+          const isBound = marker !== undefined;
           const isSelected = selectedNote === note;
           const isPressed = pressedNote === note;
 
@@ -141,9 +142,9 @@ export function NoteGrid({
               <div style={{ fontSize: 14, fontWeight: 900 }}>{note}</div>
               <div style={{ fontSize: 12, opacity: 0.78 }}>{noteName(note)}</div>
 
-              {/* Bound indicator: small dot, but consistent */}
+              {/* Bound indicator: emoji or default marker */}
               <div style={{ height: 12, fontSize: 12, opacity: 0.9 }}>
-                {isBound ? "●" : " "}
+                {isBound ? marker : " "}
               </div>
             </button>
           );
@@ -151,7 +152,7 @@ export function NoteGrid({
       </div>
 
       <div style={{ marginTop: 10, opacity: 0.7, fontSize: 12 }}>
-        ● = bound • cyan glow = pressed • green glow = selected
+        emoji/marker = bound • cyan glow = pressed • green glow = selected
       </div>
     </div>
   );

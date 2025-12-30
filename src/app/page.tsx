@@ -7,6 +7,40 @@ import { BindingEditor } from "../components/BindingEditor";
 import { apiGet, API_BASE } from "../components/useMidiApi";
 import type { ContextHeader } from "../components/types";
 
+// Toggle switch component
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val: boolean) => void; label: string }) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}>
+      <span style={{ fontWeight: "bold" }}>{label}:</span>
+      <div
+        onClick={() => onChange(!checked)}
+        style={{
+          width: 44,
+          height: 24,
+          borderRadius: 12,
+          background: checked ? "lime" : "#444",
+          position: "relative",
+          transition: "background 0.2s",
+          border: "1px solid #666",
+        }}
+      >
+        <div
+          style={{
+            width: 18,
+            height: 18,
+            borderRadius: "50%",
+            background: "white",
+            position: "absolute",
+            top: 2,
+            left: checked ? 22 : 2,
+            transition: "left 0.2s",
+          }}
+        />
+      </div>
+    </label>
+  );
+}
+
 type Derived = { bank_msb: number; bank_lsb: number; program: number };
 type MidiEventRaw = any;
 
@@ -65,6 +99,8 @@ export default function Home() {
   const [selectedNote, setSelectedNote] = useState<number | null>(null);
 
   const [keygrab, setKeygrab] = useState<boolean>(true);
+  const [mouseMode, setMouseMode] = useState<boolean>(false);
+  const [showConsole, setShowConsole] = useState<boolean>(true);
   const [events, setEvents] = useState<MidiEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -205,12 +241,16 @@ export default function Home() {
     };
   }, [followObserved]);
 
-  const boundNotes = useMemo(() => {
-    const s = new Set<number>();
+  const boundMarkers = useMemo(() => {
+    const m = new Map<number, string>();
     for (const b of bindings) {
-      if (b.trig_type === 1 && typeof b.note === "number" && b.enabled === 1) s.add(b.note);
+      if (b.trig_type === 1 && typeof b.note === "number" && b.enabled === 1) {
+        // Use emoji if provided, otherwise default to "•"
+        const marker = b.notify_emoji && b.notify_emoji.trim() ? b.notify_emoji : "•";
+        m.set(b.note, marker);
+      }
     }
-    return s;
+    return m;
   }, [bindings]);
 
   const liveNote = useMemo(() => {
@@ -220,22 +260,64 @@ export default function Home() {
     return null;
   }, [events]);
 
-  // "armed" = header matches what’s being emitted right now (local check)
+  // "armed" = should show active colors (not greyed out)
+  // Grey out only when: (no MIDI detected AND mouse mode off) OR (keygrab off AND mouse mode off)
   const armed = useMemo(() => {
-    if (!header) return false;
-    const ch = observed.note_channel ?? observed.channel ?? null;
-    if (ch == null) return false;
-    if (ch !== header.channel) return false;
-    if (observed.derived.bank_msb !== header.bank_msb) return false;
-    if (observed.derived.bank_lsb !== header.bank_lsb) return false;
-    if (observed.derived.program !== header.program) return false;
-    return true;
-  }, [header, observed]);
+    return (observed.port_name !== null || mouseMode) && (keygrab || mouseMode);
+  }, [observed.port_name, mouseMode, keygrab]);
+
+  // Load mouse mode on mount
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/api/mouse_mode`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive) setMouseMode(data.enabled ?? false);
+      })
+      .catch(console.error);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function toggleKeygrab() {
     const next = !keygrab;
     setKeygrab(next);
     await fetch(`${API_BASE}/api/keygrab/set?enabled=${next ? "true" : "false"}`, { method: "POST" });
+  }
+
+  async function toggleMouseMode() {
+    const next = !mouseMode;
+    setMouseMode(next);
+    await fetch(`${API_BASE}/api/mouse_mode/set?enabled=${next ? "true" : "false"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    });
+  }
+
+  async function handleNoteSelect(note: number) {
+    setSelectedNote(note);
+
+    // If mouse mode is on and note is bound, run it
+    if (mouseMode) {
+      const marker = boundMarkers.get(note);
+      if (marker !== undefined && contextId) {
+        // Find the binding to get its ID
+        const binding = bindings.find((b) => b.trig_type === 1 && b.note === note && b.enabled === 1);
+        if (binding?.id) {
+          try {
+            await fetch(`${API_BASE}/api/bindings/run`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ binding_id: binding.id }),
+            });
+          } catch (err) {
+            console.error("Failed to run binding:", err);
+          }
+        }
+      }
+    }
   }
 
   function snapHeaderToObserved() {
@@ -254,46 +336,37 @@ export default function Home() {
     <div style={{ padding: 16, display: "grid", gap: 12 }}>
       <h1 style={{ margin: 0 }}>MIDI Mapper (Setup Mode)</h1>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <div style={{ opacity: 0.8 }}>
-          Local keygrab running: <b>{keygrab ? "YES" : "NO"}</b>
+      {/* Compact status strip */}
+      <div
+        style={{
+          border: "1px solid #333",
+          borderRadius: 8,
+          padding: "8px 12px",
+          display: "flex",
+          gap: 16,
+          alignItems: "center",
+          flexWrap: "wrap",
+          fontSize: 14,
+          opacity: 0.9,
+        }}
+      >
+        <div>
+          <b>Input:</b> {observed.port_name ?? "—"}
         </div>
-        <button onClick={toggleKeygrab}>{keygrab ? "Stop keygrab" : "Start keygrab"}</button>
-      </div>
-
-      {/* Observed (live) state */}
-      <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12, opacity: 0.95 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div>
+          <b>Context:</b> {contextId ?? "—"}
+        </div>
+        {liveNote != null && (
           <div>
-            <b>Observed</b>{" "}
-            <span style={{ opacity: 0.8 }}>
-              (last event {observed.ts ? new Date(observed.ts * 1000).toLocaleTimeString() : "—"})
-            </span>
+            <b>Last pressed:</b> {liveNote} ({["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][liveNote % 12]}
+            {Math.floor(liveNote / 12) - 1})
           </div>
+        )}
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={followObserved}
-                onChange={(e) => setFollowObserved(e.target.checked)}
-              />
-              Follow observed
-            </label>
-
-            <button onClick={snapHeaderToObserved}>Snap header → observed</button>
-
-            <div>
-              match: <b style={{ color: armed ? "lime" : "tomato" }}>{armed ? "YES" : "NO"}</b>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ fontFamily: "monospace", marginTop: 8, whiteSpace: "pre-wrap" }}>
-          {`port=${observed.port_name ?? "—"}  `}
-          {`event_ch=${observed.channel ?? "—"}  `}
-          {`note_ch=${observed.note_channel ?? "—"}\n`}
-          {`bank(msb=${observed.derived.bank_msb} lsb=${observed.derived.bank_lsb}) prog=${observed.derived.program}`}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 12, alignItems: "center" }}>
+          <Toggle checked={keygrab} onChange={toggleKeygrab} label="Keygrab" />
+          <Toggle checked={mouseMode} onChange={toggleMouseMode} label="Mouse Mode" />
+          <Toggle checked={showConsole} onChange={setShowConsole} label="Live Console" />
         </div>
       </div>
 
@@ -309,67 +382,69 @@ export default function Home() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 12, alignItems: "start" }}>
         <NoteGrid
-          boundNotes={boundNotes}
+          boundMarkers={boundMarkers}
           selectedNote={selectedNote}
-          onSelect={setSelectedNote}
+          onSelect={handleNoteSelect}
           armed={armed}
-          liveNote={liveNote}
+          pressedNote={liveNote}
         />
         <BindingEditor contextId={contextId} selectedNote={selectedNote} onBindingsChanged={reloadBindings} />
       </div>
 
-      <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
-        <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <b>Live MIDI Console</b> (binding_match shows only when header selection matches and keygrab is enabled)
+      {showConsole && (
+        <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
+          <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <b>Live MIDI Console</b> (binding_match shows only when header selection matches and keygrab is enabled)
+            </div>
+            <div style={{ opacity: 0.8 }}>active_context_id: {contextId ?? "—"}</div>
           </div>
-          <div style={{ opacity: 0.8 }}>active_context_id: {contextId ?? "—"}</div>
+
+          <div
+            style={{
+              whiteSpace: "pre-wrap",
+              fontFamily: "monospace",
+              border: "1px solid #444",
+              padding: 12,
+              height: "20vh",
+              overflow: "auto",
+            }}
+          >
+            {events.map((e, idx) => {
+              const dch = e.derived_ch ?? e.derived;
+              const dpt = e.derived_port ?? e.derived;
+
+              const base =
+                `[${new Date(e.ts * 1000).toLocaleTimeString()}] ` +
+                `${e.port_name} → ${e.type} ` +
+                `ch=${e.channel ?? "-"} ` +
+                (e.type === "note_on" || e.type === "note_off"
+                  ? `note=${e.note} vel=${e.velocity}`
+                  : e.type === "control_change"
+                  ? `cc=${e.cc} value=${e.value}`
+                  : e.type === "pitchwheel"
+                  ? `pitch=${e.pitch}`
+                  : e.type === "program_change"
+                  ? `program=${e.program}`
+                  : "") +
+                `  derived_ch(msb=${dch.bank_msb} lsb=${dch.bank_lsb} prog=${dch.program})` +
+                `  derived_port(msb=${dpt.bank_msb} lsb=${dpt.bank_lsb} prog=${dpt.program})` +
+                `  match=${e.context_match ? "Y" : "N"}`;
+
+              const match = e.binding_match
+                ? `\n    BINDING: trig_type=${e.binding_match.trig_type} note=${e.binding_match.note} cc=${e.binding_match.cc}\n    CMD: ${e.binding_match.command}`
+                : "";
+
+              return (
+                <div key={idx}>
+                  {base}
+                  {match}
+                </div>
+              );
+            })}
+          </div>
         </div>
-
-        <div
-          style={{
-            whiteSpace: "pre-wrap",
-            fontFamily: "monospace",
-            border: "1px solid #444",
-            padding: 12,
-            height: "40vh",
-            overflow: "auto",
-          }}
-        >
-          {events.map((e, idx) => {
-            const dch = e.derived_ch ?? e.derived;
-            const dpt = e.derived_port ?? e.derived;
-
-            const base =
-              `[${new Date(e.ts * 1000).toLocaleTimeString()}] ` +
-              `${e.port_name} → ${e.type} ` +
-              `ch=${e.channel ?? "-"} ` +
-              (e.type === "note_on" || e.type === "note_off"
-                ? `note=${e.note} vel=${e.velocity}`
-                : e.type === "control_change"
-                ? `cc=${e.cc} value=${e.value}`
-                : e.type === "pitchwheel"
-                ? `pitch=${e.pitch}`
-                : e.type === "program_change"
-                ? `program=${e.program}`
-                : "") +
-              `  derived_ch(msb=${dch.bank_msb} lsb=${dch.bank_lsb} prog=${dch.program})` +
-              `  derived_port(msb=${dpt.bank_msb} lsb=${dpt.bank_lsb} prog=${dpt.program})` +
-              `  match=${e.context_match ? "Y" : "N"}`;
-
-            const match = e.binding_match
-              ? `\n    BINDING: trig_type=${e.binding_match.trig_type} note=${e.binding_match.note} cc=${e.binding_match.cc}\n    CMD: ${e.binding_match.command}`
-              : "";
-
-            return (
-              <div key={idx}>
-                {base}
-                {match}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

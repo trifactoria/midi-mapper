@@ -2,6 +2,8 @@
 import asyncio
 import json
 import os
+import shlex
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +28,18 @@ MAX_NOTE = int(os.environ.get("MIDI_MAPPER_MAX_NOTE", "127"))
 
 CORS_ORIGINS = os.environ.get("MIDI_MAPPER_CORS_ORIGINS", "*")
 ALLOW_ORIGINS = ["*"] if CORS_ORIGINS.strip() == "*" else [s.strip() for s in CORS_ORIGINS.split(",") if s.strip()]
+
+# Execution configuration
+EXEC_PATH_ENV = os.environ.get("MIDI_MAPPER_EXEC_PATH", "$PATH")
+EXEC_USE_SHELL = os.environ.get("MIDI_MAPPER_EXEC_USE_SHELL", "false").lower() in ("true", "1", "yes")
+
+# Build execution PATH
+if EXEC_PATH_ENV == "$PATH" or not EXEC_PATH_ENV:
+    EXEC_PATH = os.environ.get("PATH", "")
+else:
+    # Prepend custom paths to existing PATH
+    custom_paths = EXEC_PATH_ENV.replace("$PATH", os.environ.get("PATH", ""))
+    EXEC_PATH = custom_paths
 
 # -----------------------------
 # Models (match your UI header)
@@ -58,6 +72,9 @@ class BindingIn(BaseModel):
     command: str
     debounce_ms: int = 200
     require_armed: int = 1
+    notes: str = ""
+    notify_text: str = ""
+    notify_emoji: str = ""
 
 
 class OutputSelectIn(BaseModel):
@@ -91,7 +108,7 @@ OUTPUT_PORT_CACHE: Dict[str, Any] = {}
 LAST_NOTE_CHANNEL: Dict[str, int] = {}
 
 # Active selection sent by UI (for match gating)
-# (This is NOT the DB "context_id"; it’s the “header filter” for when the grid should light.)
+# (This is NOT the DB "context_id"; it's the "header filter" for when the grid should light.)
 ACTIVE_SELECTION: Dict[str, Any] = {
     "port_id": None,
     "port_name": None,
@@ -100,6 +117,9 @@ ACTIVE_SELECTION: Dict[str, Any] = {
     "bank_lsb": 0,
     "program": 0,
 }
+
+# Debounce tracking: binding_id -> last_fired_timestamp
+LAST_FIRED: Dict[int, float] = {}
 
 # -----------------------------
 # FastAPI
@@ -176,12 +196,112 @@ async def get_active_context_id() -> Optional[int]:
     return int(v) if v.isdigit() else None
 
 
+async def apply_migrations() -> None:
+    """Apply database migrations if needed."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Check if new columns exist
+        cursor = await db.execute("PRAGMA table_info(bindings)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+
+        # Apply migration 002 if needed
+        if "notes" not in column_names:
+            await db.execute("ALTER TABLE bindings ADD COLUMN notes TEXT DEFAULT ''")
+            await db.execute("ALTER TABLE bindings ADD COLUMN notify_text TEXT DEFAULT ''")
+            await db.execute("ALTER TABLE bindings ADD COLUMN notify_emoji TEXT DEFAULT ''")
+            await db.commit()
+
+
+async def load_and_apply_defaults() -> None:
+    """Load defaults from settings and apply to ACTIVE_SELECTION and active_context_id."""
+    # Load defaults
+    daw_slot = await get_setting("default_daw_slot")
+    preset_slot = await get_setting("default_preset_slot")
+    port_id = await get_setting("default_port_id")
+    channel = await get_setting("default_channel")
+    bank_msb = await get_setting("default_bank_msb")
+    bank_lsb = await get_setting("default_bank_lsb")
+    program = await get_setting("default_program")
+
+    # If no defaults saved, use first port + zeros
+    if port_id is None:
+        rows = await db_fetchall("SELECT id, name FROM ports ORDER BY id LIMIT 1")
+        if rows:
+            port_id = str(rows[0]["id"])
+            port_name = rows[0]["name"]
+        else:
+            return  # No ports available
+
+        daw_slot = "0"
+        preset_slot = "0"
+        channel = "0"
+        bank_msb = "0"
+        bank_lsb = "0"
+        program = "0"
+    else:
+        # Get port name
+        port_name = await get_port_name(int(port_id))
+
+    # Set ACTIVE_SELECTION
+    ACTIVE_SELECTION["port_id"] = int(port_id)
+    ACTIVE_SELECTION["port_name"] = port_name
+    ACTIVE_SELECTION["channel"] = int(channel) if channel else 0
+    ACTIVE_SELECTION["bank_msb"] = int(bank_msb) if bank_msb else 0
+    ACTIVE_SELECTION["bank_lsb"] = int(bank_lsb) if bank_lsb else 0
+    ACTIVE_SELECTION["program"] = int(program) if program else 0
+
+    # Get or create context for these defaults
+    row = await db_fetchone(
+        """
+        SELECT id FROM contexts
+        WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
+          AND bank_msb=? AND bank_lsb=? AND program=?
+        """,
+        (
+            int(daw_slot) if daw_slot else 0,
+            int(preset_slot) if preset_slot else 0,
+            int(port_id),
+            int(channel) if channel else 0,
+            int(bank_msb) if bank_msb else 0,
+            int(bank_lsb) if bank_lsb else 0,
+            int(program) if program else 0,
+        ),
+    )
+
+    if row:
+        context_id = row["id"]
+    else:
+        # Create context
+        await db_exec(
+            """
+            INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(daw_slot) if daw_slot else 0,
+                int(preset_slot) if preset_slot else 0,
+                int(port_id),
+                int(channel) if channel else 0,
+                int(bank_msb) if bank_msb else 0,
+                int(bank_lsb) if bank_lsb else 0,
+                int(program) if program else 0,
+            ),
+        )
+        row2 = await db_fetchone("SELECT last_insert_rowid() AS id")
+        context_id = row2["id"]
+
+    # Set active_context_id
+    await set_setting("active_context_id", str(context_id))
+
+
 # -----------------------------
 # Lifecycle
 # -----------------------------
 @app.on_event("startup")
 async def _startup() -> None:
+    await apply_migrations()
     await ensure_ports_registered()
+    await load_and_apply_defaults()
     asyncio.create_task(midi_pump())
 
 
@@ -377,6 +497,170 @@ async def get_or_create_context(ctx: ContextIn) -> Dict[str, Any]:
     return {"context_id": row2["id"]}
 
 
+# -----------------------------
+# Command execution helpers
+# -----------------------------
+async def safe_execute_command(command: str) -> Dict[str, Any]:
+    """Execute a command using PATH resolution.
+
+    Returns:
+        dict with keys: ok (bool), pid (int if ok), error (str if not ok),
+        started_at (float), resolved_exe (str), argv (list), path_used (str)
+    """
+    if not command or not command.strip():
+        return {"ok": False, "error": "Empty command", "argv": [], "path_used": EXEC_PATH}
+
+    started_at = time.time()
+
+    # Shell mode (opt-in only)
+    if EXEC_USE_SHELL:
+        try:
+            env = os.environ.copy()
+            env["PATH"] = EXEC_PATH
+            proc = await asyncio.create_subprocess_exec(
+                "bash",
+                "-lc",
+                command,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=env,
+            )
+            return {
+                "ok": True,
+                "pid": proc.pid,
+                "started_at": started_at,
+                "resolved_exe": "bash",
+                "argv": ["bash", "-lc", command],
+                "path_used": EXEC_PATH,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"Shell execution failed: {e}",
+                "started_at": started_at,
+                "resolved_exe": "bash",
+                "argv": ["bash", "-lc", command],
+                "path_used": EXEC_PATH,
+            }
+
+    # Parse command (argv mode)
+    try:
+        parts = shlex.split(command)
+    except ValueError as e:
+        return {
+            "ok": False,
+            "error": f"Invalid command syntax: {e}",
+            "argv": [],
+            "path_used": EXEC_PATH,
+        }
+
+    if not parts:
+        return {"ok": False, "error": "Empty command after parsing", "argv": [], "path_used": EXEC_PATH}
+
+    # Resolve executable
+    exe = parts[0]
+    resolved_exe = None
+
+    # If exe contains '/', treat as path and expand ~
+    if "/" in exe:
+        exe_path = Path(exe).expanduser()
+        if exe_path.exists() and os.access(exe_path, os.X_OK):
+            resolved_exe = str(exe_path.resolve())
+        else:
+            return {
+                "ok": False,
+                "error": f"Path '{exe}' not found or not executable",
+                "resolved_exe": str(exe_path) if exe_path.exists() else None,
+                "argv": parts,
+                "path_used": EXEC_PATH,
+            }
+    else:
+        # Use shutil.which to resolve via PATH
+        resolved_exe = shutil.which(exe, path=EXEC_PATH)
+        if not resolved_exe:
+            return {
+                "ok": False,
+                "error": f"Command '{exe}' not found in PATH",
+                "resolved_exe": None,
+                "argv": parts,
+                "path_used": EXEC_PATH,
+            }
+
+    # Execute command (detached, non-blocking)
+    try:
+        env = os.environ.copy()
+        env["PATH"] = EXEC_PATH
+        proc = await asyncio.create_subprocess_exec(
+            resolved_exe,
+            *parts[1:],
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        return {
+            "ok": True,
+            "pid": proc.pid,
+            "started_at": started_at,
+            "resolved_exe": resolved_exe,
+            "argv": parts,
+            "path_used": EXEC_PATH,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"Failed to execute: {e}",
+            "started_at": started_at,
+            "resolved_exe": resolved_exe,
+            "argv": parts,
+            "path_used": EXEC_PATH,
+        }
+
+
+async def send_notification(notify_text: str, notify_emoji: str = "") -> Dict[str, Any]:
+    """Send desktop notification via notify-send using PATH resolution.
+
+    Returns:
+        dict with keys: ok (bool), error (str if not ok), notify_error (str if failed)
+    """
+    if not notify_text:
+        return {"ok": True, "skipped": True}
+
+    title = "MIDI Mapper"
+    message = f"{notify_emoji} {notify_text}".strip()
+
+    # Resolve notify-send via PATH
+    notify_send = shutil.which("notify-send", path=EXEC_PATH)
+    if not notify_send:
+        return {
+            "ok": False,
+            "notify_error": "notify-send not found in PATH",
+            "path_used": EXEC_PATH,
+        }
+
+    try:
+        env = os.environ.copy()
+        env["PATH"] = EXEC_PATH
+        proc = await asyncio.create_subprocess_exec(
+            notify_send,
+            title,
+            message,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "notify_error": f"notify-send failed with code {proc.returncode}: {stderr.decode()[:200]}",
+            }
+
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "notify_error": f"Failed to execute notify-send: {e}"}
+
+
 @app.get("/api/contexts/{context_id}/bindings")
 async def list_bindings(context_id: int) -> List[Dict[str, Any]]:
     rows = await db_fetchall("SELECT * FROM bindings WHERE context_id=? ORDER BY id", (context_id,))
@@ -389,9 +673,9 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
         """
         INSERT INTO bindings(
           context_id, enabled, trig_type, note, cc, value_min, value_max, pitch_min, pitch_max,
-          command, debounce_ms, require_armed
+          command, debounce_ms, require_armed, notes, notify_text, notify_emoji
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(context_id, trig_type, note, cc)
         DO UPDATE SET
           enabled=excluded.enabled,
@@ -401,7 +685,10 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
           pitch_max=excluded.pitch_max,
           command=excluded.command,
           debounce_ms=excluded.debounce_ms,
-          require_armed=excluded.require_armed
+          require_armed=excluded.require_armed,
+          notes=excluded.notes,
+          notify_text=excluded.notify_text,
+          notify_emoji=excluded.notify_emoji
         """,
         (
             b.context_id,
@@ -416,6 +703,9 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
             b.command,
             b.debounce_ms,
             b.require_armed,
+            b.notes,
+            b.notify_text,
+            b.notify_emoji,
         ),
     )
     return {"ok": True}
@@ -433,6 +723,43 @@ async def remove_binding(
         (context_id, trig_type, note, cc),
     )
     return {"ok": True}
+
+
+class BindingRunIn(BaseModel):
+    binding_id: int
+
+
+@app.post("/api/bindings/run")
+async def run_binding(payload: BindingRunIn) -> Dict[str, Any]:
+    """Manually test-run a binding's command."""
+    # Fetch binding
+    binding = await db_fetchone("SELECT * FROM bindings WHERE id=?", (payload.binding_id,))
+    if not binding:
+        return {"ok": False, "error": "Binding not found"}
+
+    binding_dict = dict(binding)
+    command = binding_dict.get("command", "")
+    notify_text = binding_dict.get("notify_text", "")
+    notify_emoji = binding_dict.get("notify_emoji", "")
+
+    # Execute command first
+    if not command:
+        return {"ok": False, "error": "No command configured"}
+
+    result = await safe_execute_command(command)
+
+    # Send notification after command execution (if configured)
+    notify_result = {}
+    if notify_text:
+        # Prepend error indicator if command failed
+        prefix = "❌ " if not result.get("ok") else ""
+        notify_result = await send_notification(prefix + notify_text, notify_emoji)
+
+    # Merge notification result into response
+    if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
+        result["notify_error"] = notify_result.get("notify_error")
+
+    return result
 
 
 @app.get("/api/settings")
@@ -457,6 +784,73 @@ async def keygrab_get() -> Dict[str, Any]:
 @app.post("/api/keygrab/set")
 async def keygrab_set(enabled: bool) -> Dict[str, Any]:
     await set_setting("keygrab_enabled", "true" if enabled else "false")
+    return {"ok": True, "enabled": enabled}
+
+
+@app.post("/api/defaults/save")
+async def save_defaults(ctx: ContextIn) -> Dict[str, Any]:
+    """Save current header as startup defaults."""
+    await set_setting("default_daw_slot", str(ctx.daw_slot))
+    await set_setting("default_preset_slot", str(ctx.preset_slot))
+    await set_setting("default_port_id", str(ctx.port_id))
+    await set_setting("default_channel", str(ctx.channel))
+    await set_setting("default_bank_msb", str(ctx.bank_msb))
+    await set_setting("default_bank_lsb", str(ctx.bank_lsb))
+    await set_setting("default_program", str(ctx.program))
+    return {"ok": True}
+
+
+@app.get("/api/defaults")
+async def get_defaults() -> Dict[str, Any]:
+    """Get startup defaults for header."""
+    # Try to load from settings
+    daw_slot = await get_setting("default_daw_slot")
+    preset_slot = await get_setting("default_preset_slot")
+    port_id = await get_setting("default_port_id")
+    channel = await get_setting("default_channel")
+    bank_msb = await get_setting("default_bank_msb")
+    bank_lsb = await get_setting("default_bank_lsb")
+    program = await get_setting("default_program")
+
+    # If we have saved defaults, use them
+    if port_id is not None:
+        return {
+            "daw_slot": int(daw_slot) if daw_slot else 0,
+            "preset_slot": int(preset_slot) if preset_slot else 0,
+            "port_id": int(port_id),
+            "channel": int(channel) if channel else 0,
+            "bank_msb": int(bank_msb) if bank_msb else 0,
+            "bank_lsb": int(bank_lsb) if bank_lsb else 0,
+            "program": int(program) if program else 0,
+        }
+
+    # No defaults saved, return first port + zeros
+    rows = await db_fetchall("SELECT id FROM ports ORDER BY id LIMIT 1")
+    first_port_id = rows[0]["id"] if rows else 1
+
+    return {
+        "daw_slot": 0,
+        "preset_slot": 0,
+        "port_id": first_port_id,
+        "channel": 0,
+        "bank_msb": 0,
+        "bank_lsb": 0,
+        "program": 0,
+    }
+
+
+@app.get("/api/mouse_mode")
+async def mouse_mode_get() -> Dict[str, Any]:
+    """Get mouse mode state."""
+    v = await get_setting("mouse_mode_enabled")
+    enabled = v is not None and v.lower() == "true"
+    return {"enabled": enabled}
+
+
+@app.post("/api/mouse_mode/set")
+async def mouse_mode_set(enabled: bool) -> Dict[str, Any]:
+    """Set mouse mode state."""
+    await set_setting("mouse_mode_enabled", "true" if enabled else "false")
     return {"ok": True, "enabled": enabled}
 
 
@@ -639,6 +1033,49 @@ async def midi_pump() -> None:
                                 "SELECT * FROM bindings WHERE context_id=? AND trig_type=4 AND enabled=1 LIMIT 1",
                                 (ctx_id,),
                             )
+
+                        # Execute binding command if found
+                        if binding:
+                            binding_dict = dict(binding)
+                            binding_id = binding_dict.get("id")
+                            command = binding_dict.get("command", "")
+                            debounce_ms = binding_dict.get("debounce_ms", 200)
+                            require_armed = binding_dict.get("require_armed", 1)
+                            notify_text = binding_dict.get("notify_text", "")
+                            notify_emoji = binding_dict.get("notify_emoji", "")
+
+                            # Check require_armed (use keygrab_enabled as armed state)
+                            armed = keygrab_enabled
+                            can_execute = True
+
+                            if require_armed and not armed:
+                                can_execute = False
+
+                            # Check debounce
+                            now = time.time() * 1000  # ms
+                            last = LAST_FIRED.get(binding_id, 0)
+                            if now - last < debounce_ms:
+                                can_execute = False
+
+                            if can_execute:
+                                # Update last fired time
+                                LAST_FIRED[binding_id] = now
+
+                                # Execute command first (if configured)
+                                exec_result = None
+                                if command:
+                                    exec_result = await safe_execute_command(command)
+                                    payload["command_execution"] = exec_result
+
+                                # Send notification after command execution (if configured)
+                                if notify_text:
+                                    # Prepend error indicator if command failed
+                                    prefix = ""
+                                    if exec_result and not exec_result.get("ok"):
+                                        prefix = "❌ "
+                                    notify_result = await send_notification(prefix + notify_text, notify_emoji)
+                                    if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
+                                        payload["notify_error"] = notify_result.get("notify_error")
 
                     payload["binding_match"] = dict(binding) if binding else None
                     await ws_mgr.broadcast(payload)
