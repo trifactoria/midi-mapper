@@ -320,13 +320,12 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
           onClick={onSaveAsDefaults}
           disabled={disabled}
           title="Save current header values as startup defaults"
-          style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #444", cursor: "pointer" }}
+          className="btn"
         >
           Save As Defaults
         </button>
 
         {sendStatus ? <span style={{ opacity: 0.85 }}>{sendStatus}</span> : null}
-        {saveStatus ? <span style={{ opacity: 0.7 }}>{saveStatus}</span> : null}
       </div>
     </div>
   );

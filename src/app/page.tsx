@@ -100,7 +100,7 @@ export default function Home() {
 
   const [keygrab, setKeygrab] = useState<boolean>(true);
   const [mouseMode, setMouseMode] = useState<boolean>(false);
-  const [showConsole, setShowConsole] = useState<boolean>(true);
+  const [showConsole, setShowConsole] = useState<boolean>(false);
   const [events, setEvents] = useState<MidiEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -334,8 +334,6 @@ export default function Home() {
 
   return (
     <div style={{ padding: 16, display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>MIDI Mapper (Setup Mode)</h1>
-
       {/* Compact status strip */}
       <div
         style={{
@@ -352,9 +350,6 @@ export default function Home() {
       >
         <div>
           <b>Input:</b> {observed.port_name ?? "—"}
-        </div>
-        <div>
-          <b>Context:</b> {contextId ?? "—"}
         </div>
         {liveNote != null && (
           <div>
@@ -393,11 +388,27 @@ export default function Home() {
 
       {showConsole && (
         <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
-          <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div>
-              <b>Live MIDI Console</b> (binding_match shows only when header selection matches and keygrab is enabled)
+          <div style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <b>Live MIDI Console</b>
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  alert("Help: binding_match shows only when header selection matches and keygrab is enabled");
+                }}
+                style={{ fontSize: 12, opacity: 0.7, textDecoration: "underline", color: "inherit" }}
+              >
+                Help
+              </a>
             </div>
-            <div style={{ opacity: 0.8 }}>active_context_id: {contextId ?? "—"}</div>
+            <button
+              className="btn"
+              onClick={() => setEvents([])}
+              style={{ padding: "4px 12px", fontSize: 12 }}
+            >
+              Clear
+            </button>
           </div>
 
           <div

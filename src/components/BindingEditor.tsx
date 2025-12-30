@@ -20,8 +20,11 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
   const [notifyEmoji, setNotifyEmoji] = useState<string>("");
   const [bindingId, setBindingId] = useState<number | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
 
   const canAct = contextId != null && selectedNote != null;
+
+  const emojiPalette = ["✅", "⚡", "🔥", "🎛️", "🎹", "🧠", "📁", "🌐", "🧰", "🖥️", "🎬", "🎵", "🧪", "🧩", "⭐"];
 
   // Auto-load binding when note is selected
   useEffect(() => {
@@ -149,11 +152,11 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     }
     setStatus("Running command…");
     try {
-      const result = await apiPost("/api/bindings/run", { binding_id: bindingId });
-      if (result.ok) {
+      const result = await apiPost<{ ok?: boolean; pid?: number; error?: string }>("/api/bindings/run", { binding_id: bindingId });
+      if (result?.ok) {
         setStatus(`Command started (PID: ${result.pid})`);
       } else {
-        setStatus(`Error: ${result.error}`);
+        setStatus(`Error: ${result?.error ?? "Unknown error"}`);
       }
     } catch (err) {
       setStatus(`Failed to run: ${err}`);
@@ -167,9 +170,9 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button disabled={!canAct} onClick={setBinding}>Save</button>
-        <button disabled={!canAct} onClick={removeBinding}>Remove</button>
-        <button disabled={bindingId === null} onClick={testRun}>Run Now</button>
+        <button className="btn-secondary" disabled={!canAct} onClick={setBinding}>Save</button>
+        <button className="btn-danger" disabled={!canAct} onClick={removeBinding}>Remove</button>
+        <button className="btn-primary" disabled={bindingId === null} onClick={testRun}>Run Now</button>
       </div>
 
       <label style={{ display: "block", marginBottom: 8 }}>
@@ -184,13 +187,83 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
 
       <label style={{ display: "block", marginBottom: 8 }}>
         Emoji (for note grid marker)
-        <input
-          value={notifyEmoji}
-          onChange={(e) => setNotifyEmoji(e.target.value.slice(0, 8))}
-          placeholder="e.g. 🎵 or leave empty for •"
-          maxLength={8}
-          style={{ width: "100%", padding: 8, marginTop: 4 }}
-        />
+        <div style={{ display: "flex", gap: 8, marginTop: 4, position: "relative" }}>
+          <input
+            value={notifyEmoji}
+            onChange={(e) => setNotifyEmoji(e.target.value.slice(0, 8))}
+            placeholder="e.g. 🎵 or leave empty for •"
+            maxLength={8}
+            style={{ flex: 1, padding: 8 }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            style={{ padding: "8px 12px", whiteSpace: "nowrap" }}
+          >
+            {showEmojiPicker ? "Close" : "Pick Emoji"}
+          </button>
+
+          {showEmojiPicker && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                right: 0,
+                background: "rgba(20, 20, 20, 0.95)",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                borderRadius: 10,
+                padding: 12,
+                display: "grid",
+                gridTemplateColumns: "repeat(5, 1fr)",
+                gap: 8,
+                boxShadow: "0 8px 24px rgba(0, 0, 0, 0.6)",
+                backdropFilter: "blur(10px)",
+                zIndex: 50,
+              }}
+            >
+              {emojiPalette.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => {
+                    setNotifyEmoji(emoji);
+                    setShowEmojiPicker(false);
+                  }}
+                  style={{
+                    padding: 8,
+                    fontSize: 20,
+                    cursor: "pointer",
+                    background: "rgba(255, 255, 255, 0.05)",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                    borderRadius: 6,
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(0, 212, 255, 0.2)";
+                    e.currentTarget.style.transform = "scale(1.1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)";
+                    e.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  marginTop: 4,
+                  fontSize: 11,
+                  opacity: 0.6,
+                  textAlign: "center",
+                }}
+              >
+                Or paste any emoji
+              </div>
+            </div>
+          )}
+        </div>
       </label>
 
       <label style={{ display: "block", marginBottom: 8 }}>
@@ -214,9 +287,13 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
         />
       </label>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <label>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ display: "flex", alignItems: "center" }}>
           Debounce (ms)
+          <span className="tooltip">
+            ⓘ
+            <span className="tooltip-content">Minimum time between triggers for this binding</span>
+          </span>
           <input
             type="number"
             min={0}
@@ -227,16 +304,24 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
           />
         </label>
 
-        <label>
-          Require armed
+        <label style={{ display: "flex", alignItems: "center" }}>
+          Require Keygrab
+          <span className="tooltip">
+            ⓘ
+            <span className="tooltip-content">Only trigger when Keygrab is ON</span>
+          </span>
           <select value={requireArmed} onChange={(e) => setRequireArmed(Number(e.target.value))} style={{ marginLeft: 8 }}>
             <option value={1}>Yes</option>
             <option value={0}>No</option>
           </select>
         </label>
 
-        <label>
-          Enabled
+        <label style={{ display: "flex", alignItems: "center" }}>
+          Active
+          <span className="tooltip">
+            ⓘ
+            <span className="tooltip-content">If OFF, this binding will not run</span>
+          </span>
           <select value={enabled} onChange={(e) => setEnabled(Number(e.target.value))} style={{ marginLeft: 8 }}>
             <option value={1}>Yes</option>
             <option value={0}>No</option>
