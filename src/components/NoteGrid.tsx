@@ -1,70 +1,158 @@
 "use client";
 
+import React from "react";
+
 type Props = {
   boundNotes: Set<number>;
   selectedNote: number | null;
   onSelect: (note: number) => void;
 
-  // if false: dim bound indicators (wrong channel/bank/program)
+  /** Most recently observed note from MIDI stream (note_on) */
+  pressedNote: number | null;
+
+  /** If false, dim the whole grid (e.g. selection mismatch) */
   armed: boolean;
 
-  // Highest note to render (inclusive). MIDI spec is 0..127, but many devices have fewer pads/keys.
-  // Set from backend (MAX_NOTE) or env (NEXT_PUBLIC_MIDI_MAX_NOTE) via the page.
-  maxNote?: number;
+  /** Optional limit for how many notes to render */
+  maxNote?: number; // default 127
 };
+
+const NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
 function clampInt(v: number, lo: number, hi: number) {
   if (!Number.isFinite(v)) return lo;
   return Math.max(lo, Math.min(hi, Math.trunc(v)));
 }
 
-export function NoteGrid({ boundNotes, selectedNote, onSelect, armed, maxNote = 127 }: Props) {
-  const hi = clampInt(maxNote, 0, 127);
+function pc(note: number) {
+  return ((note % 12) + 12) % 12;
+}
 
-  // 0..127 => 16 notes per row -> 8 rows (128 cells). We render only up to hi.
-  const rows = Math.ceil((hi + 1) / 16);
+function isBlackKey(note: number) {
+  const p = pc(note);
+  return p === 1 || p === 3 || p === 6 || p === 8 || p === 10;
+}
+
+function noteName(note: number) {
+  const p = pc(note);
+  const oct = Math.floor(note / 12) - 1; // MIDI: 60 = C4
+  return `${NAMES[p]}${oct}`;
+}
+
+export function NoteGrid({
+  boundNotes,
+  selectedNote,
+  onSelect,
+  pressedNote,
+  armed,
+  maxNote = 127,
+}: Props) {
+  const hi = clampInt(maxNote, 0, 127);
+  const cols = 12;
+  const rows = Math.ceil((hi + 1) / cols);
+
+  // Styling tokens (easy to tweak)
+  const whiteBg = "#f4f4f4";
+  const whiteFg = "#111";
+  const blackBg = "#161616";
+  const blackFg = "#f4f4f4";
+
+  const pressedOutline = "3px solid #00d4ff";
+  const pressedGlow = "0 0 0 5px rgba(0,212,255,0.18), 0 0 22px rgba(0,212,255,0.38)";
+  const selectedOutline = "2px solid #00bd7d";
+  const selectedGlow = "0 0 0 4px rgba(0,189,125,0.16), 0 0 14px rgba(0,189,125,0.25)";
+
+  const baseCell: React.CSSProperties = {
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.08)",
+    padding: "10px 6px",
+    cursor: "pointer",
+    userSelect: "none",
+    display: "grid",
+    gap: 2,
+    alignContent: "center",
+    justifyItems: "center",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    transition: "transform 70ms ease, box-shadow 70ms ease, outline 70ms ease, filter 70ms ease",
+  };
 
   return (
-    <div style={{ border: "1px solid #333", borderRadius: 8, padding: 10 }}>
-      <div style={{ marginBottom: 8, opacity: 0.8 }}>Notes (0–{hi}). Click a note number to bind.</div>
+    <div style={{ border: "1px solid #2a2a2a", borderRadius: 12, padding: 12 }}>
+      <div style={{ marginBottom: 10, display: "flex", gap: 12, alignItems: "baseline" }}>
+        <div style={{ opacity: 0.9 }}>Notes (0–{hi})</div>
+        <div style={{ opacity: 0.65, fontSize: 12 }}>
+          pressed:{" "}
+          {pressedNote == null ? "—" : `${pressedNote} (${noteName(pressedNote)})`}
+        </div>
+      </div>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(16, minmax(28px, 1fr))",
-          gap: 6,
-          fontFamily: "monospace",
+          gridTemplateColumns: `repeat(${cols}, minmax(56px, 1fr))`,
+          gap: 10,
+          opacity: armed ? 1 : 0.35,
         }}
       >
-        {Array.from({ length: rows * 16 }, (_, k) => {
-          const note = k;
-          if (note > hi) return <div key={k} />;
+        {Array.from({ length: rows * cols }, (_, idx) => {
+          const note = idx;
+          if (note > hi) return <div key={idx} />;
 
-          const isSelected = selectedNote === note;
+          const black = isBlackKey(note);
           const isBound = boundNotes.has(note);
+          const isSelected = selectedNote === note;
+          const isPressed = pressedNote === note;
+
+          // Make pressed always win over selected, and both win over bound
+          const outline = isPressed
+            ? pressedOutline
+            : isSelected
+            ? selectedOutline
+            : "none";
+
+          const boxShadow = isPressed
+            ? pressedGlow
+            : isSelected
+            ? selectedGlow
+            : isBound
+            ? "0 0 0 2px rgba(255,255,255,0.08)"
+            : undefined;
+
+          const transform = isPressed ? "translateY(-2px) scale(1.03)" : isSelected ? "translateY(-1px)" : undefined;
+
+          const bg = black ? blackBg : whiteBg;
+          const fg = black ? blackFg : whiteFg;
 
           return (
             <button
-              key={k}
+              key={idx}
               onClick={() => onSelect(note)}
               style={{
-                border: "1px solid #444",
-                borderRadius: 6,
-                padding: "6px 0",
-                cursor: "pointer",
-                opacity: armed ? 1 : 0.35,
-                fontWeight: isSelected ? 800 : 400,
+                ...baseCell,
+                background: bg,
+                color: fg,
+                outline,
+                boxShadow,
+                transform,
+                filter: isPressed ? "brightness(1.10)" : undefined,
               }}
-              title={isBound ? "Bound" : "Unbound"}
+              title={`${note} • ${noteName(note)}${isBound ? " • bound" : ""}`}
             >
-              {note}
-              {isBound ? "*" : ""}
+              <div style={{ fontSize: 14, fontWeight: 900 }}>{note}</div>
+              <div style={{ fontSize: 12, opacity: 0.78 }}>{noteName(note)}</div>
+
+              {/* Bound indicator: small dot, but consistent */}
+              <div style={{ height: 12, fontSize: 12, opacity: 0.9 }}>
+                {isBound ? "●" : " "}
+              </div>
             </button>
           );
         })}
       </div>
 
-      <div style={{ marginTop: 8, opacity: 0.75 }}>* = has a binding in this context (even if match is off).</div>
+      <div style={{ marginTop: 10, opacity: 0.7, fontSize: 12 }}>
+        ● = bound • cyan glow = pressed • green glow = selected
+      </div>
     </div>
   );
 }
