@@ -28,7 +28,7 @@ export function Header() {
               title="Menu"
             >
               <img
-                src="/public/logo.png"
+                src="logo.png"
                 alt="MIDI Mapper"
                 style={{ width: 24, height: 24, display: "block" }}
               />
