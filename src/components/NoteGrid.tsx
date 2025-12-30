@@ -52,15 +52,15 @@ export function NoteGrid({
   const rows = Math.ceil((hi + 1) / cols);
 
   // Styling tokens (easy to tweak)
-  const whiteBg = "#f4f4f4";
-  const whiteFg = "#111";
-  const blackBg = "#161616";
-  const blackFg = "#f4f4f4";
+  const whiteBg = "#f9f9f9";
+  const whiteFg = "#0a0a0a";
+  const blackBg = "#1a1a1a";
+  const blackFg = "#f0f0f0";
 
   const pressedOutline = "3px solid #00d4ff";
-  const pressedGlow = "0 0 0 5px rgba(0,212,255,0.18), 0 0 22px rgba(0,212,255,0.38)";
+  const pressedGlow = "0 0 0 6px rgba(0,212,255,0.25), 0 0 28px rgba(0,212,255,0.45)";
   const selectedOutline = "2px solid #00bd7d";
-  const selectedGlow = "0 0 0 4px rgba(0,189,125,0.16), 0 0 14px rgba(0,189,125,0.25)";
+  const selectedGlow = "0 0 0 5px rgba(0,189,125,0.22), 0 0 18px rgba(0,189,125,0.35)";
 
   const baseCell: React.CSSProperties = {
     borderRadius: 10,
@@ -143,7 +143,7 @@ export function NoteGrid({
               <div style={{ fontSize: 12, opacity: 0.78 }}>{noteName(note)}</div>
 
               {/* Bound indicator: emoji or default marker */}
-              <div style={{ height: 12, fontSize: 12, opacity: 0.9 }}>
+              <div style={{ height: 14, fontSize: 14, opacity: 1, fontWeight: 600 }}>
                 {isBound ? marker : " "}
               </div>
             </button>
