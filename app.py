@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import shlex
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,18 @@ MAX_NOTE = int(os.environ.get("MIDI_MAPPER_MAX_NOTE", "127"))
 
 CORS_ORIGINS = os.environ.get("MIDI_MAPPER_CORS_ORIGINS", "*")
 ALLOW_ORIGINS = ["*"] if CORS_ORIGINS.strip() == "*" else [s.strip() for s in CORS_ORIGINS.split(",") if s.strip()]
+
+# Execution configuration
+EXEC_PATH_ENV = os.environ.get("MIDI_MAPPER_EXEC_PATH", "$PATH")
+EXEC_USE_SHELL = os.environ.get("MIDI_MAPPER_EXEC_USE_SHELL", "false").lower() in ("true", "1", "yes")
+
+# Build execution PATH
+if EXEC_PATH_ENV == "$PATH" or not EXEC_PATH_ENV:
+    EXEC_PATH = os.environ.get("PATH", "")
+else:
+    # Prepend custom paths to existing PATH
+    custom_paths = EXEC_PATH_ENV.replace("$PATH", os.environ.get("PATH", ""))
+    EXEC_PATH = custom_paths
 
 # -----------------------------
 # Models (match your UI header)
@@ -197,12 +210,6 @@ async def apply_migrations() -> None:
             await db.execute("ALTER TABLE bindings ADD COLUMN notify_text TEXT DEFAULT ''")
             await db.execute("ALTER TABLE bindings ADD COLUMN notify_emoji TEXT DEFAULT ''")
             await db.commit()
-
-        # Ensure command_root setting exists
-        await db.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES ('command_root', './scripts')"
-        )
-        await db.commit()
 
 
 # -----------------------------
@@ -411,98 +418,164 @@ async def get_or_create_context(ctx: ContextIn) -> Dict[str, Any]:
 # Command execution helpers
 # -----------------------------
 async def safe_execute_command(command: str) -> Dict[str, Any]:
-    """Execute a command safely with path restrictions.
+    """Execute a command using PATH resolution.
 
     Returns:
-        dict with keys: ok (bool), pid (int if ok), error (str if not ok), started_at (float)
+        dict with keys: ok (bool), pid (int if ok), error (str if not ok),
+        started_at (float), resolved_exe (str), argv (list), path_used (str)
     """
     if not command or not command.strip():
-        return {"ok": False, "error": "Empty command"}
+        return {"ok": False, "error": "Empty command", "argv": [], "path_used": EXEC_PATH}
 
-    # Get command_root setting
-    command_root = await get_setting("command_root")
-    if not command_root:
-        command_root = "./scripts"
+    started_at = time.time()
 
-    # Parse command
+    # Shell mode (opt-in only)
+    if EXEC_USE_SHELL:
+        try:
+            env = os.environ.copy()
+            env["PATH"] = EXEC_PATH
+            proc = await asyncio.create_subprocess_exec(
+                "bash",
+                "-lc",
+                command,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=env,
+            )
+            return {
+                "ok": True,
+                "pid": proc.pid,
+                "started_at": started_at,
+                "resolved_exe": "bash",
+                "argv": ["bash", "-lc", command],
+                "path_used": EXEC_PATH,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"Shell execution failed: {e}",
+                "started_at": started_at,
+                "resolved_exe": "bash",
+                "argv": ["bash", "-lc", command],
+                "path_used": EXEC_PATH,
+            }
+
+    # Parse command (argv mode)
     try:
         parts = shlex.split(command)
     except ValueError as e:
-        return {"ok": False, "error": f"Invalid command syntax: {e}"}
-
-    if not parts:
-        return {"ok": False, "error": "Empty command after parsing"}
-
-    # Resolve paths
-    cmd_path = Path(parts[0])
-    root_path = Path(command_root).resolve()
-
-    # If relative, resolve against command_root
-    if not cmd_path.is_absolute():
-        cmd_path = (root_path / cmd_path).resolve()
-    else:
-        cmd_path = cmd_path.resolve()
-
-    # Security check: ensure command is under command_root
-    try:
-        cmd_path.relative_to(root_path)
-    except ValueError:
         return {
             "ok": False,
-            "error": f"Command path '{cmd_path}' is not under command_root '{root_path}'",
+            "error": f"Invalid command syntax: {e}",
+            "argv": [],
+            "path_used": EXEC_PATH,
         }
 
-    # Check if command exists and is executable
-    if not cmd_path.exists():
-        return {"ok": False, "error": f"Command not found: {cmd_path}"}
+    if not parts:
+        return {"ok": False, "error": "Empty command after parsing", "argv": [], "path_used": EXEC_PATH}
 
-    if not os.access(cmd_path, os.X_OK):
-        return {"ok": False, "error": f"Command not executable: {cmd_path}"}
+    # Resolve executable
+    exe = parts[0]
+    resolved_exe = None
+
+    # If exe contains '/', treat as path and expand ~
+    if "/" in exe:
+        exe_path = Path(exe).expanduser()
+        if exe_path.exists() and os.access(exe_path, os.X_OK):
+            resolved_exe = str(exe_path.resolve())
+        else:
+            return {
+                "ok": False,
+                "error": f"Path '{exe}' not found or not executable",
+                "resolved_exe": str(exe_path) if exe_path.exists() else None,
+                "argv": parts,
+                "path_used": EXEC_PATH,
+            }
+    else:
+        # Use shutil.which to resolve via PATH
+        resolved_exe = shutil.which(exe, path=EXEC_PATH)
+        if not resolved_exe:
+            return {
+                "ok": False,
+                "error": f"Command '{exe}' not found in PATH",
+                "resolved_exe": None,
+                "argv": parts,
+                "path_used": EXEC_PATH,
+            }
 
     # Execute command (detached, non-blocking)
-    started_at = time.time()
     try:
+        env = os.environ.copy()
+        env["PATH"] = EXEC_PATH
         proc = await asyncio.create_subprocess_exec(
-            str(cmd_path),
+            resolved_exe,
             *parts[1:],
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
         )
-        return {"ok": True, "pid": proc.pid, "started_at": started_at}
+        return {
+            "ok": True,
+            "pid": proc.pid,
+            "started_at": started_at,
+            "resolved_exe": resolved_exe,
+            "argv": parts,
+            "path_used": EXEC_PATH,
+        }
     except Exception as e:
-        return {"ok": False, "error": f"Failed to execute: {e}", "started_at": started_at}
+        return {
+            "ok": False,
+            "error": f"Failed to execute: {e}",
+            "started_at": started_at,
+            "resolved_exe": resolved_exe,
+            "argv": parts,
+            "path_used": EXEC_PATH,
+        }
 
 
-async def send_notification(notify_text: str, notify_emoji: str = "") -> None:
-    """Send desktop notification via notify-send."""
+async def send_notification(notify_text: str, notify_emoji: str = "") -> Dict[str, Any]:
+    """Send desktop notification via notify-send using PATH resolution.
+
+    Returns:
+        dict with keys: ok (bool), error (str if not ok), notify_error (str if failed)
+    """
     if not notify_text:
-        return
+        return {"ok": True, "skipped": True}
 
     title = "MIDI Mapper"
     message = f"{notify_emoji} {notify_text}".strip()
 
-    try:
-        # Check if notify-send exists
-        proc = await asyncio.create_subprocess_exec(
-            "which",
-            "notify-send",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
+    # Resolve notify-send via PATH
+    notify_send = shutil.which("notify-send", path=EXEC_PATH)
+    if not notify_send:
+        return {
+            "ok": False,
+            "notify_error": "notify-send not found in PATH",
+            "path_used": EXEC_PATH,
+        }
 
-        if proc.returncode == 0:
-            # Send notification
-            await asyncio.create_subprocess_exec(
-                "notify-send",
-                title,
-                message,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-    except Exception:
-        # Silently fail if notify-send is not available
-        pass
+    try:
+        env = os.environ.copy()
+        env["PATH"] = EXEC_PATH
+        proc = await asyncio.create_subprocess_exec(
+            notify_send,
+            title,
+            message,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "notify_error": f"notify-send failed with code {proc.returncode}: {stderr.decode()[:200]}",
+            }
+
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "notify_error": f"Failed to execute notify-send: {e}"}
 
 
 @app.get("/api/contexts/{context_id}/bindings")
@@ -586,16 +659,24 @@ async def run_binding(payload: BindingRunIn) -> Dict[str, Any]:
     notify_text = binding_dict.get("notify_text", "")
     notify_emoji = binding_dict.get("notify_emoji", "")
 
-    # Send notification if configured
-    if notify_text:
-        await send_notification(notify_text, notify_emoji)
-
-    # Execute command if configured
-    if command:
-        result = await safe_execute_command(command)
-        return result
-    else:
+    # Execute command first
+    if not command:
         return {"ok": False, "error": "No command configured"}
+
+    result = await safe_execute_command(command)
+
+    # Send notification after command execution (if configured)
+    notify_result = {}
+    if notify_text:
+        # Prepend error indicator if command failed
+        prefix = "❌ " if not result.get("ok") else ""
+        notify_result = await send_notification(prefix + notify_text, notify_emoji)
+
+    # Merge notification result into response
+    if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
+        result["notify_error"] = notify_result.get("notify_error")
+
+    return result
 
 
 @app.get("/api/settings")
@@ -830,13 +911,21 @@ async def midi_pump() -> None:
                                 # Update last fired time
                                 LAST_FIRED[binding_id] = now
 
-                                # Send notification if configured
-                                if notify_text:
-                                    asyncio.create_task(send_notification(notify_text, notify_emoji))
-
-                                # Execute command if configured
+                                # Execute command first (if configured)
+                                exec_result = None
                                 if command:
-                                    asyncio.create_task(safe_execute_command(command))
+                                    exec_result = await safe_execute_command(command)
+                                    payload["command_execution"] = exec_result
+
+                                # Send notification after command execution (if configured)
+                                if notify_text:
+                                    # Prepend error indicator if command failed
+                                    prefix = ""
+                                    if exec_result and not exec_result.get("ok"):
+                                        prefix = "❌ "
+                                    notify_result = await send_notification(prefix + notify_text, notify_emoji)
+                                    if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
+                                        payload["notify_error"] = notify_result.get("notify_error")
 
                     payload["binding_match"] = dict(binding) if binding else None
                     await ws_mgr.broadcast(payload)
