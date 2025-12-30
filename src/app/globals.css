@@ -74,31 +74,31 @@ button:disabled, .btn:disabled {
 
 /* Secondary button (Save) */
 .btn-secondary {
-  background: linear-gradient(135deg, var(--success), #009662);
-  border-color: var(--success);
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: #10b981;
   color: #000;
   font-weight: 600;
-  box-shadow: 0 0 20px var(--success-dim), 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.2), 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #00d48f, var(--success));
-  box-shadow: 0 0 30px rgba(0, 189, 125, 0.4), 0 4px 12px rgba(0, 0, 0, 0.4);
+  background: linear-gradient(135deg, #34d399, #10b981);
+  box-shadow: 0 0 30px rgba(16, 185, 129, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
   transform: translateY(-2px);
 }
 
 /* Danger button (Remove) */
 .btn-danger {
-  background: linear-gradient(135deg, var(--danger), #cc3355);
-  border-color: var(--danger);
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  border-color: #ef4444;
   color: #fff;
   font-weight: 600;
-  box-shadow: 0 0 20px var(--danger-dim), 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.2), 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: linear-gradient(135deg, #ff5577, var(--danger));
-  box-shadow: 0 0 30px rgba(255, 68, 102, 0.4), 0 4px 12px rgba(0, 0, 0, 0.4);
+  background: linear-gradient(135deg, #f87171, #ef4444);
+  box-shadow: 0 0 30px rgba(239, 68, 68, 0.5), 0 4px 12px rgba(0, 0, 0, 0.4);
   transform: translateY(-2px);
 }
 
@@ -106,8 +106,8 @@ button:disabled, .btn:disabled {
 input, select, textarea {
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--foreground);
   font-size: 14px;
   transition: all 0.15s ease;
@@ -115,13 +115,13 @@ input, select, textarea {
 }
 
 input:hover, select:hover, textarea:hover {
-  border-color: rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.15);
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
@@ -167,18 +167,4 @@ input:focus, select:focus, textarea:focus {
 
 .tooltip:hover .tooltip-content {
   visibility: visible;
-}
-
-/* Responsive grid for main content */
-.main-grid {
-  display: grid;
-  grid-template-columns: 1fr 420px;
-  gap: 12px;
-  align-items: start;
-}
-
-@media (max-width: 1024px) {
-  .main-grid {
-    grid-template-columns: 1fr;
-  }
 }

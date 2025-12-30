@@ -375,16 +375,15 @@ export default function Home() {
         onContextId={setContextId}
       />
 
-      <div className="main-grid">
-        <NoteGrid
-          boundMarkers={boundMarkers}
-          selectedNote={selectedNote}
-          onSelect={handleNoteSelect}
-          armed={armed}
-          pressedNote={liveNote}
-        />
-        <BindingEditor contextId={contextId} selectedNote={selectedNote} onBindingsChanged={reloadBindings} />
-      </div>
+      <BindingEditor contextId={contextId} selectedNote={selectedNote} onBindingsChanged={reloadBindings} />
+
+      <NoteGrid
+        boundMarkers={boundMarkers}
+        selectedNote={selectedNote}
+        onSelect={handleNoteSelect}
+        armed={armed}
+        pressedNote={liveNote}
+      />
 
       {showConsole && (
         <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12 }}>
