@@ -22,4 +22,7 @@ export type Binding = {
   command: string;
   debounce_ms: number;
   require_armed: number;
+  notes: string;
+  notify_text: string;
+  notify_emoji: string;
 };

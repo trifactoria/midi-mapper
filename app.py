@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +59,9 @@ class BindingIn(BaseModel):
     command: str
     debounce_ms: int = 200
     require_armed: int = 1
+    notes: str = ""
+    notify_text: str = ""
+    notify_emoji: str = ""
 
 
 class OutputSelectIn(BaseModel):
@@ -91,7 +95,7 @@ OUTPUT_PORT_CACHE: Dict[str, Any] = {}
 LAST_NOTE_CHANNEL: Dict[str, int] = {}
 
 # Active selection sent by UI (for match gating)
-# (This is NOT the DB "context_id"; it’s the “header filter” for when the grid should light.)
+# (This is NOT the DB "context_id"; it's the "header filter" for when the grid should light.)
 ACTIVE_SELECTION: Dict[str, Any] = {
     "port_id": None,
     "port_name": None,
@@ -100,6 +104,9 @@ ACTIVE_SELECTION: Dict[str, Any] = {
     "bank_lsb": 0,
     "program": 0,
 }
+
+# Debounce tracking: binding_id -> last_fired_timestamp
+LAST_FIRED: Dict[int, float] = {}
 
 # -----------------------------
 # FastAPI
@@ -176,11 +183,34 @@ async def get_active_context_id() -> Optional[int]:
     return int(v) if v.isdigit() else None
 
 
+async def apply_migrations() -> None:
+    """Apply database migrations if needed."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Check if new columns exist
+        cursor = await db.execute("PRAGMA table_info(bindings)")
+        columns = await cursor.fetchall()
+        column_names = [col[1] for col in columns]
+
+        # Apply migration 002 if needed
+        if "notes" not in column_names:
+            await db.execute("ALTER TABLE bindings ADD COLUMN notes TEXT DEFAULT ''")
+            await db.execute("ALTER TABLE bindings ADD COLUMN notify_text TEXT DEFAULT ''")
+            await db.execute("ALTER TABLE bindings ADD COLUMN notify_emoji TEXT DEFAULT ''")
+            await db.commit()
+
+        # Ensure command_root setting exists
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('command_root', './scripts')"
+        )
+        await db.commit()
+
+
 # -----------------------------
 # Lifecycle
 # -----------------------------
 @app.on_event("startup")
 async def _startup() -> None:
+    await apply_migrations()
     await ensure_ports_registered()
     asyncio.create_task(midi_pump())
 
@@ -377,6 +407,104 @@ async def get_or_create_context(ctx: ContextIn) -> Dict[str, Any]:
     return {"context_id": row2["id"]}
 
 
+# -----------------------------
+# Command execution helpers
+# -----------------------------
+async def safe_execute_command(command: str) -> Dict[str, Any]:
+    """Execute a command safely with path restrictions.
+
+    Returns:
+        dict with keys: ok (bool), pid (int if ok), error (str if not ok), started_at (float)
+    """
+    if not command or not command.strip():
+        return {"ok": False, "error": "Empty command"}
+
+    # Get command_root setting
+    command_root = await get_setting("command_root")
+    if not command_root:
+        command_root = "./scripts"
+
+    # Parse command
+    try:
+        parts = shlex.split(command)
+    except ValueError as e:
+        return {"ok": False, "error": f"Invalid command syntax: {e}"}
+
+    if not parts:
+        return {"ok": False, "error": "Empty command after parsing"}
+
+    # Resolve paths
+    cmd_path = Path(parts[0])
+    root_path = Path(command_root).resolve()
+
+    # If relative, resolve against command_root
+    if not cmd_path.is_absolute():
+        cmd_path = (root_path / cmd_path).resolve()
+    else:
+        cmd_path = cmd_path.resolve()
+
+    # Security check: ensure command is under command_root
+    try:
+        cmd_path.relative_to(root_path)
+    except ValueError:
+        return {
+            "ok": False,
+            "error": f"Command path '{cmd_path}' is not under command_root '{root_path}'",
+        }
+
+    # Check if command exists and is executable
+    if not cmd_path.exists():
+        return {"ok": False, "error": f"Command not found: {cmd_path}"}
+
+    if not os.access(cmd_path, os.X_OK):
+        return {"ok": False, "error": f"Command not executable: {cmd_path}"}
+
+    # Execute command (detached, non-blocking)
+    started_at = time.time()
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            str(cmd_path),
+            *parts[1:],
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return {"ok": True, "pid": proc.pid, "started_at": started_at}
+    except Exception as e:
+        return {"ok": False, "error": f"Failed to execute: {e}", "started_at": started_at}
+
+
+async def send_notification(notify_text: str, notify_emoji: str = "") -> None:
+    """Send desktop notification via notify-send."""
+    if not notify_text:
+        return
+
+    title = "MIDI Mapper"
+    message = f"{notify_emoji} {notify_text}".strip()
+
+    try:
+        # Check if notify-send exists
+        proc = await asyncio.create_subprocess_exec(
+            "which",
+            "notify-send",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+
+        if proc.returncode == 0:
+            # Send notification
+            await asyncio.create_subprocess_exec(
+                "notify-send",
+                title,
+                message,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+    except Exception:
+        # Silently fail if notify-send is not available
+        pass
+
+
 @app.get("/api/contexts/{context_id}/bindings")
 async def list_bindings(context_id: int) -> List[Dict[str, Any]]:
     rows = await db_fetchall("SELECT * FROM bindings WHERE context_id=? ORDER BY id", (context_id,))
@@ -389,9 +517,9 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
         """
         INSERT INTO bindings(
           context_id, enabled, trig_type, note, cc, value_min, value_max, pitch_min, pitch_max,
-          command, debounce_ms, require_armed
+          command, debounce_ms, require_armed, notes, notify_text, notify_emoji
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(context_id, trig_type, note, cc)
         DO UPDATE SET
           enabled=excluded.enabled,
@@ -401,7 +529,10 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
           pitch_max=excluded.pitch_max,
           command=excluded.command,
           debounce_ms=excluded.debounce_ms,
-          require_armed=excluded.require_armed
+          require_armed=excluded.require_armed,
+          notes=excluded.notes,
+          notify_text=excluded.notify_text,
+          notify_emoji=excluded.notify_emoji
         """,
         (
             b.context_id,
@@ -416,6 +547,9 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
             b.command,
             b.debounce_ms,
             b.require_armed,
+            b.notes,
+            b.notify_text,
+            b.notify_emoji,
         ),
     )
     return {"ok": True}
@@ -433,6 +567,35 @@ async def remove_binding(
         (context_id, trig_type, note, cc),
     )
     return {"ok": True}
+
+
+class BindingRunIn(BaseModel):
+    binding_id: int
+
+
+@app.post("/api/bindings/run")
+async def run_binding(payload: BindingRunIn) -> Dict[str, Any]:
+    """Manually test-run a binding's command."""
+    # Fetch binding
+    binding = await db_fetchone("SELECT * FROM bindings WHERE id=?", (payload.binding_id,))
+    if not binding:
+        return {"ok": False, "error": "Binding not found"}
+
+    binding_dict = dict(binding)
+    command = binding_dict.get("command", "")
+    notify_text = binding_dict.get("notify_text", "")
+    notify_emoji = binding_dict.get("notify_emoji", "")
+
+    # Send notification if configured
+    if notify_text:
+        await send_notification(notify_text, notify_emoji)
+
+    # Execute command if configured
+    if command:
+        result = await safe_execute_command(command)
+        return result
+    else:
+        return {"ok": False, "error": "No command configured"}
 
 
 @app.get("/api/settings")
@@ -639,6 +802,41 @@ async def midi_pump() -> None:
                                 "SELECT * FROM bindings WHERE context_id=? AND trig_type=4 AND enabled=1 LIMIT 1",
                                 (ctx_id,),
                             )
+
+                        # Execute binding command if found
+                        if binding:
+                            binding_dict = dict(binding)
+                            binding_id = binding_dict.get("id")
+                            command = binding_dict.get("command", "")
+                            debounce_ms = binding_dict.get("debounce_ms", 200)
+                            require_armed = binding_dict.get("require_armed", 1)
+                            notify_text = binding_dict.get("notify_text", "")
+                            notify_emoji = binding_dict.get("notify_emoji", "")
+
+                            # Check require_armed (use keygrab_enabled as armed state)
+                            armed = keygrab_enabled
+                            can_execute = True
+
+                            if require_armed and not armed:
+                                can_execute = False
+
+                            # Check debounce
+                            now = time.time() * 1000  # ms
+                            last = LAST_FIRED.get(binding_id, 0)
+                            if now - last < debounce_ms:
+                                can_execute = False
+
+                            if can_execute:
+                                # Update last fired time
+                                LAST_FIRED[binding_id] = now
+
+                                # Send notification if configured
+                                if notify_text:
+                                    asyncio.create_task(send_notification(notify_text, notify_emoji))
+
+                                # Execute command if configured
+                                if command:
+                                    asyncio.create_task(safe_execute_command(command))
 
                     payload["binding_match"] = dict(binding) if binding else None
                     await ws_mgr.broadcast(payload)

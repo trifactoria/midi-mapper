@@ -23,12 +23,16 @@ export default function BindPage() {
     reloadBindings();
   }, [reloadBindings]);
 
-  const boundNotes = useMemo(() => {
-    const s = new Set<number>();
+  const boundMarkers = useMemo(() => {
+    const m = new Map<number, string>();
     for (const b of bindings) {
-      if (b.trig_type === 1 && typeof b.note === "number" && b.enabled === 1) s.add(b.note);
+      if (b.trig_type === 1 && typeof b.note === "number" && b.enabled === 1) {
+        // Use emoji if provided, otherwise default to "•"
+        const marker = b.notify_emoji && b.notify_emoji.trim() ? b.notify_emoji : "•";
+        m.set(b.note, marker);
+      }
     }
-    return s;
+    return m;
   }, [bindings]);
 
   return (
@@ -38,7 +42,13 @@ export default function BindPage() {
       <MidiContextBar value={header} onChange={setHeader} onContextId={setContextId} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 12, alignItems: "start" }}>
-        <NoteGrid boundNotes={boundNotes} selectedNote={selectedNote} onSelect={setSelectedNote} />
+        <NoteGrid
+          boundMarkers={boundMarkers}
+          selectedNote={selectedNote}
+          onSelect={setSelectedNote}
+          pressedNote={null}
+          armed={true}
+        />
         <BindingEditor contextId={contextId} selectedNote={selectedNote} onBindingsChanged={reloadBindings} />
       </div>
     </div>

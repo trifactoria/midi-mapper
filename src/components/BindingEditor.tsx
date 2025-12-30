@@ -15,6 +15,10 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
   const [debounceMs, setDebounceMs] = useState<number>(200);
   const [requireArmed, setRequireArmed] = useState<number>(1);
   const [enabled, setEnabled] = useState<number>(1);
+  const [notes, setNotes] = useState<string>("");
+  const [notifyText, setNotifyText] = useState<string>("");
+  const [notifyEmoji, setNotifyEmoji] = useState<string>("");
+  const [bindingId, setBindingId] = useState<number | null>(null);
   const [status, setStatus] = useState<string>("");
 
   const canAct = contextId != null && selectedNote != null;
@@ -29,6 +33,10 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       setDebounceMs(200);
       setRequireArmed(1);
       setEnabled(1);
+      setNotes("");
+      setNotifyText("");
+      setNotifyEmoji("");
+      setBindingId(null);
       setStatus("No binding found for that note.");
       return;
     }
@@ -36,6 +44,10 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     setDebounceMs(match.debounce_ms ?? 200);
     setRequireArmed(match.require_armed ?? 1);
     setEnabled(match.enabled ?? 1);
+    setNotes(match.notes ?? "");
+    setNotifyText(match.notify_text ?? "");
+    setNotifyEmoji(match.notify_emoji ?? "");
+    setBindingId(match.id);
     setStatus(`Loaded binding id=${match.id}`);
   }
 
@@ -46,7 +58,7 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       return;
     }
     setStatus("Saving…");
-    const payload: Binding = {
+    const payload = {
       context_id: contextId!,
       enabled,
       trig_type: 1,
@@ -55,6 +67,9 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       command,
       debounce_ms: debounceMs,
       require_armed: requireArmed,
+      notes,
+      notify_text: notifyText,
+      notify_emoji: notifyEmoji.slice(0, 8), // Limit emoji to 8 chars
     };
     await apiPost("/api/bindings/set", payload);
     setStatus("Saved.");
@@ -71,8 +86,30 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
       { method: "POST" }
     );
     setCommand("");
+    setNotes("");
+    setNotifyText("");
+    setNotifyEmoji("");
+    setBindingId(null);
     setStatus("Removed.");
     onBindingsChanged();
+  }
+
+  async function testRun() {
+    if (bindingId === null) {
+      setStatus("No binding loaded to test.");
+      return;
+    }
+    setStatus("Running command…");
+    try {
+      const result = await apiPost("/api/bindings/run", { binding_id: bindingId });
+      if (result.ok) {
+        setStatus(`Command started (PID: ${result.pid})`);
+      } else {
+        setStatus(`Error: ${result.error}`);
+      }
+    } catch (err) {
+      setStatus(`Failed to run: ${err}`);
+    }
   }
 
   return (
@@ -83,8 +120,9 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         <button disabled={!canAct} onClick={getExisting}>Get</button>
-        <button disabled={!canAct} onClick={setBinding}>Set</button>
+        <button disabled={!canAct} onClick={setBinding}>Save</button>
         <button disabled={!canAct} onClick={removeBinding}>Remove</button>
+        <button disabled={bindingId === null} onClick={testRun}>Test Run</button>
       </div>
 
       <label style={{ display: "block", marginBottom: 8 }}>
@@ -92,8 +130,40 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
         <input
           value={command}
           onChange={(e) => setCommand(e.target.value)}
-          placeholder="e.g. /home/andy/bin/ffrec-menu"
+          placeholder="e.g. ./scripts/my-command"
           style={{ width: "100%", padding: 8, marginTop: 4 }}
+        />
+      </label>
+
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Emoji (for note grid marker)
+        <input
+          value={notifyEmoji}
+          onChange={(e) => setNotifyEmoji(e.target.value.slice(0, 8))}
+          placeholder="e.g. 🎵 or leave empty for •"
+          maxLength={8}
+          style={{ width: "100%", padding: 8, marginTop: 4 }}
+        />
+      </label>
+
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Notify Text
+        <input
+          value={notifyText}
+          onChange={(e) => setNotifyText(e.target.value)}
+          placeholder="Notification message when triggered"
+          style={{ width: "100%", padding: 8, marginTop: 4 }}
+        />
+      </label>
+
+      <label style={{ display: "block", marginBottom: 8 }}>
+        Notes
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Freeform notes for this binding"
+          rows={4}
+          style={{ width: "100%", padding: 8, marginTop: 4, resize: "vertical" }}
         />
       </label>
 

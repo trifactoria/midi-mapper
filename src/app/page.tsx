@@ -205,12 +205,16 @@ export default function Home() {
     };
   }, [followObserved]);
 
-  const boundNotes = useMemo(() => {
-    const s = new Set<number>();
+  const boundMarkers = useMemo(() => {
+    const m = new Map<number, string>();
     for (const b of bindings) {
-      if (b.trig_type === 1 && typeof b.note === "number" && b.enabled === 1) s.add(b.note);
+      if (b.trig_type === 1 && typeof b.note === "number" && b.enabled === 1) {
+        // Use emoji if provided, otherwise default to "•"
+        const marker = b.notify_emoji && b.notify_emoji.trim() ? b.notify_emoji : "•";
+        m.set(b.note, marker);
+      }
     }
-    return s;
+    return m;
   }, [bindings]);
 
   const liveNote = useMemo(() => {
@@ -309,11 +313,11 @@ export default function Home() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 12, alignItems: "start" }}>
         <NoteGrid
-          boundNotes={boundNotes}
+          boundMarkers={boundMarkers}
           selectedNote={selectedNote}
           onSelect={setSelectedNote}
           armed={armed}
-          liveNote={liveNote}
+          pressedNote={liveNote}
         />
         <BindingEditor contextId={contextId} selectedNote={selectedNote} onBindingsChanged={reloadBindings} />
       </div>
