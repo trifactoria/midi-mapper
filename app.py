@@ -60,6 +60,7 @@ class SendContextIn(ContextIn):
 
 
 class BindingIn(BaseModel):
+    id: Optional[int] = None  # If provided, UPDATE by id instead of UPSERT
     context_id: int
     enabled: int = 1
     trig_type: int  # 1 note_on, 2 cc, 3 pitchwheel, 4 program_change
@@ -669,6 +670,39 @@ async def list_bindings(context_id: int) -> List[Dict[str, Any]]:
 
 @app.post("/api/bindings/set")
 async def set_binding(b: BindingIn) -> Dict[str, Any]:
+    # If id is provided, do direct UPDATE by id (more reliable for edits)
+    if b.id is not None:
+        await db_exec(
+            """
+            UPDATE bindings
+            SET context_id=?, enabled=?, trig_type=?, note=?, cc=?,
+                value_min=?, value_max=?, pitch_min=?, pitch_max=?,
+                command=?, debounce_ms=?, require_armed=?,
+                notes=?, notify_text=?, notify_emoji=?
+            WHERE id=?
+            """,
+            (
+                b.context_id,
+                b.enabled,
+                b.trig_type,
+                b.note,
+                b.cc,
+                b.value_min,
+                b.value_max,
+                b.pitch_min,
+                b.pitch_max,
+                b.command,
+                b.debounce_ms,
+                b.require_armed,
+                b.notes,
+                b.notify_text,
+                b.notify_emoji,
+                b.id,
+            ),
+        )
+        return {"ok": True, "binding_id": b.id}
+
+    # Otherwise, use UPSERT logic (for new bindings)
     await db_exec(
         """
         INSERT INTO bindings(
@@ -708,7 +742,12 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
             b.notify_emoji,
         ),
     )
-    return {"ok": True}
+
+    # Get the binding_id that was just inserted
+    row = await db_fetchone("SELECT last_insert_rowid() AS id")
+    binding_id = row["id"] if row else None
+
+    return {"ok": True, "binding_id": binding_id}
 
 
 @app.post("/api/bindings/remove")
