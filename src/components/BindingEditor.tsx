@@ -109,7 +109,7 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     }
     setStatus("Saving…");
     try {
-      const payload = {
+      const payload: any = {
         context_id: contextId!,
         enabled,
         trig_type: 1,
@@ -122,6 +122,11 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
         notify_text: notifyText,
         notify_emoji: notifyEmoji.slice(0, 8), // Limit emoji to 8 chars
       };
+
+      // If we have a binding ID, include it so backend knows to update
+      if (bindingId !== null) {
+        payload.id = bindingId;
+      }
 
       const response = await apiPost<{ binding_id?: number }>("/api/bindings/set", payload);
 
