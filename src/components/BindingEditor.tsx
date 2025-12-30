@@ -23,6 +23,54 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
 
   const canAct = contextId != null && selectedNote != null;
 
+  // Auto-load binding when note is selected
+  useEffect(() => {
+    if (!canAct) return;
+
+    let alive = true;
+
+    async function loadBinding() {
+      setStatus("Loading…");
+      try {
+        const list = await apiGet<any[]>(`/api/contexts/${contextId}/bindings`);
+        if (!alive) return;
+
+        const match = list.find((b) => b.trig_type === 1 && b.note === selectedNote);
+        if (!match) {
+          setCommand("");
+          setDebounceMs(200);
+          setRequireArmed(1);
+          setEnabled(1);
+          setNotes("");
+          setNotifyText("");
+          setNotifyEmoji("");
+          setBindingId(null);
+          setStatus("No binding for this note");
+          return;
+        }
+
+        setCommand(match.command ?? "");
+        setDebounceMs(match.debounce_ms ?? 200);
+        setRequireArmed(match.require_armed ?? 1);
+        setEnabled(match.enabled ?? 1);
+        setNotes(match.notes ?? "");
+        setNotifyText(match.notify_text ?? "");
+        setNotifyEmoji(match.notify_emoji ?? "");
+        setBindingId(match.id);
+        setStatus(`Loaded binding id=${match.id}`);
+      } catch (err) {
+        if (!alive) return;
+        setStatus(`Error loading: ${err}`);
+      }
+    }
+
+    loadBinding();
+
+    return () => {
+      alive = false;
+    };
+  }, [contextId, selectedNote, canAct]);
+
   async function getExisting() {
     if (!canAct) return;
     setStatus("Loading binding…");

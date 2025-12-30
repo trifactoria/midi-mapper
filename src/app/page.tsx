@@ -65,6 +65,7 @@ export default function Home() {
   const [selectedNote, setSelectedNote] = useState<number | null>(null);
 
   const [keygrab, setKeygrab] = useState<boolean>(true);
+  const [mouseMode, setMouseMode] = useState<boolean>(false);
   const [events, setEvents] = useState<MidiEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -236,10 +237,58 @@ export default function Home() {
     return true;
   }, [header, observed]);
 
+  // Load mouse mode on mount
+  useEffect(() => {
+    let alive = true;
+    fetch(`${API_BASE}/api/mouse_mode`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive) setMouseMode(data.enabled ?? false);
+      })
+      .catch(console.error);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   async function toggleKeygrab() {
     const next = !keygrab;
     setKeygrab(next);
     await fetch(`${API_BASE}/api/keygrab/set?enabled=${next ? "true" : "false"}`, { method: "POST" });
+  }
+
+  async function toggleMouseMode() {
+    const next = !mouseMode;
+    setMouseMode(next);
+    await fetch(`${API_BASE}/api/mouse_mode/set?enabled=${next ? "true" : "false"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    });
+  }
+
+  async function handleNoteSelect(note: number) {
+    setSelectedNote(note);
+
+    // If mouse mode is on and note is bound, run it
+    if (mouseMode) {
+      const marker = boundMarkers.get(note);
+      if (marker !== undefined && contextId) {
+        // Find the binding to get its ID
+        const binding = bindings.find((b) => b.trig_type === 1 && b.note === note && b.enabled === 1);
+        if (binding?.id) {
+          try {
+            await fetch(`${API_BASE}/api/bindings/run`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ binding_id: binding.id }),
+            });
+          } catch (err) {
+            console.error("Failed to run binding:", err);
+          }
+        }
+      }
+    }
   }
 
   function snapHeaderToObserved() {
@@ -258,46 +307,46 @@ export default function Home() {
     <div style={{ padding: 16, display: "grid", gap: 12 }}>
       <h1 style={{ margin: 0 }}>MIDI Mapper (Setup Mode)</h1>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <div style={{ opacity: 0.8 }}>
-          Local keygrab running: <b>{keygrab ? "YES" : "NO"}</b>
+      {/* Compact status strip */}
+      <div
+        style={{
+          border: "1px solid #333",
+          borderRadius: 8,
+          padding: "8px 12px",
+          display: "flex",
+          gap: 16,
+          alignItems: "center",
+          flexWrap: "wrap",
+          fontSize: 14,
+          opacity: 0.9,
+        }}
+      >
+        <div>
+          <b>Input:</b> {observed.port_name ?? "—"}
         </div>
-        <button onClick={toggleKeygrab}>{keygrab ? "Stop keygrab" : "Start keygrab"}</button>
-      </div>
-
-      {/* Observed (live) state */}
-      <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12, opacity: 0.95 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div>
+          <b>Context:</b> {contextId ?? "—"}
+        </div>
+        <div>
+          <b>Keygrab:</b> <span style={{ color: keygrab ? "lime" : "tomato" }}>{keygrab ? "ON" : "OFF"}</span>
+        </div>
+        <div>
+          <b>Mouse Mode:</b> <span style={{ color: mouseMode ? "cyan" : "#888" }}>{mouseMode ? "ON" : "OFF"}</span>
+        </div>
+        {liveNote != null && (
           <div>
-            <b>Observed</b>{" "}
-            <span style={{ opacity: 0.8 }}>
-              (last event {observed.ts ? new Date(observed.ts * 1000).toLocaleTimeString() : "—"})
-            </span>
+            <b>Last pressed:</b> {liveNote} ({["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][liveNote % 12]}
+            {Math.floor(liveNote / 12) - 1})
           </div>
+        )}
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={followObserved}
-                onChange={(e) => setFollowObserved(e.target.checked)}
-              />
-              Follow observed
-            </label>
-
-            <button onClick={snapHeaderToObserved}>Snap header → observed</button>
-
-            <div>
-              match: <b style={{ color: armed ? "lime" : "tomato" }}>{armed ? "YES" : "NO"}</b>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ fontFamily: "monospace", marginTop: 8, whiteSpace: "pre-wrap" }}>
-          {`port=${observed.port_name ?? "—"}  `}
-          {`event_ch=${observed.channel ?? "—"}  `}
-          {`note_ch=${observed.note_channel ?? "—"}\n`}
-          {`bank(msb=${observed.derived.bank_msb} lsb=${observed.derived.bank_lsb}) prog=${observed.derived.program}`}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button onClick={toggleKeygrab} style={{ padding: "4px 8px", fontSize: 12 }}>
+            {keygrab ? "Stop" : "Start"} Keygrab
+          </button>
+          <button onClick={toggleMouseMode} style={{ padding: "4px 8px", fontSize: 12 }}>
+            {mouseMode ? "Disable" : "Enable"} Mouse Mode
+          </button>
         </div>
       </div>
 
@@ -315,7 +364,7 @@ export default function Home() {
         <NoteGrid
           boundMarkers={boundMarkers}
           selectedNote={selectedNote}
-          onSelect={setSelectedNote}
+          onSelect={handleNoteSelect}
           armed={armed}
           pressedNote={liveNote}
         />
