@@ -31,9 +31,21 @@ function range(n: number) {
   return Array.from({ length: n }, (_, i) => i);
 }
 
+type ContextWithBindings = {
+  daw_slot: number;
+  preset_slot: number;
+  port_id: number;
+  channel: number;
+  bank_msb: number;
+  bank_lsb: number;
+  program: number;
+  binding_count: number;
+};
+
 export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [ports, setPorts] = useState<Port[]>([]);
   const [err, setErr] = useState<string>("");
+  const [contextsWithBindings, setContextsWithBindings] = useState<ContextWithBindings[]>([]);
 
   // Local draft (controlled-ish)
   const [draft, setDraft] = useState<ContextHeader | null>(value);
@@ -61,6 +73,22 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
         setErr("");
       })
       .catch((e) => alive && setErr(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Load contexts with bindings (for visual hints)
+  useEffect(() => {
+    let alive = true;
+    apiGet<ContextWithBindings[]>("/api/contexts/with_bindings")
+      .then((contexts) => {
+        if (!alive) return;
+        setContextsWithBindings(contexts);
+      })
+      .catch(() => {
+        // Silent fail - hints are optional
+      });
     return () => {
       alive = false;
     };
@@ -167,6 +195,28 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, [draft, onContextId]);
 
+  // Helper functions to check if a value has bindings
+  const hasBindingsForDaw = (dawSlot: number) =>
+    contextsWithBindings.some((c) => c.daw_slot === dawSlot);
+
+  const hasBindingsForPreset = (presetSlot: number) =>
+    contextsWithBindings.some((c) => c.preset_slot === presetSlot);
+
+  const hasBindingsForPort = (portId: number) =>
+    contextsWithBindings.some((c) => c.port_id === portId);
+
+  const hasBindingsForChannel = (channel: number) =>
+    contextsWithBindings.some((c) => c.channel === channel);
+
+  const hasBindingsForBankMsb = (bankMsb: number) =>
+    contextsWithBindings.some((c) => c.bank_msb === bankMsb);
+
+  const hasBindingsForBankLsb = (bankLsb: number) =>
+    contextsWithBindings.some((c) => c.bank_lsb === bankLsb);
+
+  const hasBindingsForProgram = (program: number) =>
+    contextsWithBindings.some((c) => c.program === program);
+
   async function onSaveAsDefaults() {
     if (!draft) return;
 
@@ -211,7 +261,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {dawOptions.map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} className={hasBindingsForDaw(n) ? "has-bindings" : ""}>
                 {n}
               </option>
             ))}
@@ -227,7 +277,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {presetOptions.map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} className={hasBindingsForPreset(n) ? "has-bindings" : ""}>
                 {n}
               </option>
             ))}
@@ -243,7 +293,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {ports.map((p) => (
-              <option key={p.id} value={p.id}>
+              <option key={p.id} value={p.id} className={hasBindingsForPort(p.id) ? "has-bindings" : ""}>
                 {p.id}: {p.name}
               </option>
             ))}
@@ -259,7 +309,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {channelOptions.map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} className={hasBindingsForChannel(n) ? "has-bindings" : ""}>
                 {n + 1} (ch {n})
               </option>
             ))}
@@ -275,7 +325,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {midi7bitOptions.map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} className={hasBindingsForBankMsb(n) ? "has-bindings" : ""}>
                 {n}
               </option>
             ))}
@@ -291,7 +341,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {midi7bitOptions.map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} className={hasBindingsForBankLsb(n) ? "has-bindings" : ""}>
                 {n}
               </option>
             ))}
@@ -307,7 +357,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             style={{ width: "100%" }}
           >
             {midi7bitOptions.map((n) => (
-              <option key={n} value={n}>
+              <option key={n} value={n} className={hasBindingsForProgram(n) ? "has-bindings" : ""}>
                 {n}
               </option>
             ))}

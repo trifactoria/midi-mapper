@@ -668,6 +668,23 @@ async def list_bindings(context_id: int) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+@app.get("/api/contexts/with_bindings")
+async def contexts_with_bindings() -> List[Dict[str, Any]]:
+    """Get all contexts that have at least one binding (for UI hints)."""
+    rows = await db_fetchall(
+        """
+        SELECT DISTINCT c.daw_slot, c.preset_slot, c.port_id, c.channel,
+                        c.bank_msb, c.bank_lsb, c.program,
+                        COUNT(b.id) as binding_count
+        FROM contexts c
+        INNER JOIN bindings b ON c.id = b.context_id
+        GROUP BY c.daw_slot, c.preset_slot, c.port_id, c.channel, c.bank_msb, c.bank_lsb, c.program
+        ORDER BY binding_count DESC
+        """
+    )
+    return [dict(r) for r in rows]
+
+
 @app.post("/api/bindings/set")
 async def set_binding(b: BindingIn) -> Dict[str, Any]:
     # If id is provided, do direct UPDATE by id (more reliable for edits)
