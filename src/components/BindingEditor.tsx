@@ -25,6 +25,19 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
 
   const emojiPalette = ["✅", "⚡", "🔥", "🎛️", "🎹", "🧠", "📁", "🌐", "🧰", "🖥️", "🎬", "🎵", "🧪", "🧩", "⭐"];
 
+  // Clear fields when context changes (prevents emoji/data bleeding across contexts)
+  useEffect(() => {
+    setCommand("");
+    setDebounceMs(200);
+    setRequireArmed(1);
+    setEnabled(1);
+    setNotes("");
+    setNotifyText("");
+    setNotifyEmoji("");
+    setBindingId(null);
+    setStatus("");
+  }, [contextId]);
+
   // Auto-load binding when note is selected
   useEffect(() => {
     if (!canAct) return;

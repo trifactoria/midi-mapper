@@ -212,6 +212,19 @@ async def apply_migrations() -> None:
             await db.execute("ALTER TABLE bindings ADD COLUMN notify_emoji TEXT DEFAULT ''")
             await db.commit()
 
+        # Apply migration 003: Add context_labels table
+        cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='context_labels'")
+        if not await cursor.fetchone():
+            await db.execute(
+                """
+                CREATE TABLE context_labels (
+                    context_id INTEGER PRIMARY KEY REFERENCES contexts(id) ON DELETE CASCADE,
+                    label TEXT NOT NULL
+                )
+                """
+            )
+            await db.commit()
+
 
 async def load_and_apply_defaults() -> None:
     """Load defaults from settings and apply to ACTIVE_SELECTION and active_context_id."""
@@ -669,20 +682,85 @@ async def list_bindings(context_id: int) -> List[Dict[str, Any]]:
 
 
 @app.get("/api/contexts/with_bindings")
-async def contexts_with_bindings() -> List[Dict[str, Any]]:
-    """Get all contexts that have at least one binding (for UI hints)."""
-    rows = await db_fetchall(
-        """
-        SELECT DISTINCT c.daw_slot, c.preset_slot, c.port_id, c.channel,
+async def contexts_with_bindings(
+    daw_slot: Optional[int] = None,
+    preset_slot: Optional[int] = None,
+    port_id: Optional[int] = None,
+    channel: Optional[int] = None,
+    bank_msb: Optional[int] = None,
+    bank_lsb: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Get contexts with bindings, optionally filtered by partial context match.
+
+    This enables cascading filtering: if you select DAW=0, this returns only contexts
+    with bindings where DAW=0, so the UI can highlight only relevant Preset/Port/etc values.
+    """
+    # Build WHERE conditions based on provided filters
+    conditions = []
+    params = []
+
+    if daw_slot is not None:
+        conditions.append("c.daw_slot = ?")
+        params.append(daw_slot)
+    if preset_slot is not None:
+        conditions.append("c.preset_slot = ?")
+        params.append(preset_slot)
+    if port_id is not None:
+        conditions.append("c.port_id = ?")
+        params.append(port_id)
+    if channel is not None:
+        conditions.append("c.channel = ?")
+        params.append(channel)
+    if bank_msb is not None:
+        conditions.append("c.bank_msb = ?")
+        params.append(bank_msb)
+    if bank_lsb is not None:
+        conditions.append("c.bank_lsb = ?")
+        params.append(bank_lsb)
+
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+    query = f"""
+        SELECT DISTINCT c.id, c.daw_slot, c.preset_slot, c.port_id, c.channel,
                         c.bank_msb, c.bank_lsb, c.program,
-                        COUNT(b.id) as binding_count
+                        COUNT(b.id) as binding_count,
+                        cl.label
         FROM contexts c
         INNER JOIN bindings b ON c.id = b.context_id
-        GROUP BY c.daw_slot, c.preset_slot, c.port_id, c.channel, c.bank_msb, c.bank_lsb, c.program
+        LEFT JOIN context_labels cl ON c.id = cl.context_id
+        WHERE {where_clause}
+        GROUP BY c.id, c.daw_slot, c.preset_slot, c.port_id, c.channel, c.bank_msb, c.bank_lsb, c.program, cl.label
         ORDER BY binding_count DESC
-        """
-    )
+    """
+
+    rows = await db_fetchall(query, tuple(params))
     return [dict(r) for r in rows]
+
+
+@app.post("/api/contexts/{context_id}/label")
+async def set_context_label(context_id: int, label: str = Body(..., embed=True)) -> Dict[str, Any]:
+    """Set or update a friendly label for a context."""
+    if not label.strip():
+        # Delete label if empty
+        await db_exec("DELETE FROM context_labels WHERE context_id = ?", (context_id,))
+        return {"ok": True, "label": None}
+
+    await db_exec(
+        """
+        INSERT INTO context_labels (context_id, label)
+        VALUES (?, ?)
+        ON CONFLICT(context_id) DO UPDATE SET label = excluded.label
+        """,
+        (context_id, label.strip()),
+    )
+    return {"ok": True, "label": label.strip()}
+
+
+@app.get("/api/contexts/{context_id}/label")
+async def get_context_label(context_id: int) -> Dict[str, Any]:
+    """Get the label for a context."""
+    row = await db_fetchone("SELECT label FROM context_labels WHERE context_id = ?", (context_id,))
+    return {"label": row["label"] if row else None}
 
 
 @app.post("/api/bindings/set")

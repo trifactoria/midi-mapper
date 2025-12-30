@@ -32,6 +32,7 @@ function range(n: number) {
 }
 
 type ContextWithBindings = {
+  id: number;
   daw_slot: number;
   preset_slot: number;
   port_id: number;
@@ -40,6 +41,7 @@ type ContextWithBindings = {
   bank_lsb: number;
   program: number;
   binding_count: number;
+  label: string | null;
 };
 
 export function MidiContextBar({ value, onChange, onContextId }: Props) {
@@ -53,6 +55,11 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   // Status UI
   const [saveStatus, setSaveStatus] = useState<string>("");
   const [sendStatus, setSendStatus] = useState<string>("");
+
+  // Context label editing
+  const [currentContextId, setCurrentContextId] = useState<number | null>(null);
+  const [contextLabel, setContextLabel] = useState<string>("");
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
 
   const debounceRef = useRef<number | null>(null);
   const lastContextKeyRef = useRef<string>("");
@@ -78,7 +85,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, []);
 
-  // Load contexts with bindings (for visual hints)
+  // Load ALL contexts with bindings once (for cascading hints)
   useEffect(() => {
     let alive = true;
     apiGet<ContextWithBindings[]>("/api/contexts/with_bindings")
@@ -182,6 +189,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       apiPost<{ context_id: number }>("/api/contexts/get_or_create", draft)
         .then((r) => {
           onContextId(r.context_id);
+          setCurrentContextId(r.context_id);
           setSaveStatus(`Context: ${r.context_id}`);
         })
         .catch((e) => {
@@ -195,27 +203,126 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, [draft, onContextId]);
 
-  // Helper functions to check if a value has bindings
+  // Load context label when context ID changes
+  useEffect(() => {
+    if (currentContextId === null) {
+      setContextLabel("");
+      return;
+    }
+
+    let alive = true;
+    apiGet<{ label: string | null }>(`/api/contexts/${currentContextId}/label`)
+      .then((result) => {
+        if (!alive) return;
+        setContextLabel(result.label || "");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setContextLabel("");
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [currentContextId]);
+
+  // Jump to a saved context
+  const jumpToContext = (ctx: ContextWithBindings) => {
+    const header: ContextHeader = {
+      daw_slot: ctx.daw_slot,
+      preset_slot: ctx.preset_slot,
+      port_id: ctx.port_id,
+      channel: ctx.channel,
+      bank_msb: ctx.bank_msb,
+      bank_lsb: ctx.bank_lsb,
+      program: ctx.program,
+    };
+    setDraft(header);
+    onChange(header);
+  };
+
+  // Save context label
+  const saveContextLabel = async () => {
+    if (currentContextId === null) return;
+
+    try {
+      await apiPost(`/api/contexts/${currentContextId}/label`, { label: contextLabel });
+      // Refresh contexts list to show updated label
+      const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
+      setContextsWithBindings(contexts);
+      setIsEditingLabel(false);
+      setSendStatus("Label saved");
+      setTimeout(() => setSendStatus(""), 2000);
+    } catch (e: any) {
+      setSendStatus(e?.message ?? "Label save failed");
+    }
+  };
+
+  // Cascading helper functions - each filters by all PREVIOUS selections
   const hasBindingsForDaw = (dawSlot: number) =>
     contextsWithBindings.some((c) => c.daw_slot === dawSlot);
 
-  const hasBindingsForPreset = (presetSlot: number) =>
-    contextsWithBindings.some((c) => c.preset_slot === presetSlot);
+  const hasBindingsForPreset = (presetSlot: number) => {
+    if (!draft) return false;
+    return contextsWithBindings.some((c) => c.daw_slot === draft.daw_slot && c.preset_slot === presetSlot);
+  };
 
-  const hasBindingsForPort = (portId: number) =>
-    contextsWithBindings.some((c) => c.port_id === portId);
+  const hasBindingsForPort = (portId: number) => {
+    if (!draft) return false;
+    return contextsWithBindings.some(
+      (c) => c.daw_slot === draft.daw_slot && c.preset_slot === draft.preset_slot && c.port_id === portId
+    );
+  };
 
-  const hasBindingsForChannel = (channel: number) =>
-    contextsWithBindings.some((c) => c.channel === channel);
+  const hasBindingsForChannel = (channel: number) => {
+    if (!draft) return false;
+    return contextsWithBindings.some(
+      (c) =>
+        c.daw_slot === draft.daw_slot &&
+        c.preset_slot === draft.preset_slot &&
+        c.port_id === draft.port_id &&
+        c.channel === channel
+    );
+  };
 
-  const hasBindingsForBankMsb = (bankMsb: number) =>
-    contextsWithBindings.some((c) => c.bank_msb === bankMsb);
+  const hasBindingsForBankMsb = (bankMsb: number) => {
+    if (!draft) return false;
+    return contextsWithBindings.some(
+      (c) =>
+        c.daw_slot === draft.daw_slot &&
+        c.preset_slot === draft.preset_slot &&
+        c.port_id === draft.port_id &&
+        c.channel === draft.channel &&
+        c.bank_msb === bankMsb
+    );
+  };
 
-  const hasBindingsForBankLsb = (bankLsb: number) =>
-    contextsWithBindings.some((c) => c.bank_lsb === bankLsb);
+  const hasBindingsForBankLsb = (bankLsb: number) => {
+    if (!draft) return false;
+    return contextsWithBindings.some(
+      (c) =>
+        c.daw_slot === draft.daw_slot &&
+        c.preset_slot === draft.preset_slot &&
+        c.port_id === draft.port_id &&
+        c.channel === draft.channel &&
+        c.bank_msb === draft.bank_msb &&
+        c.bank_lsb === bankLsb
+    );
+  };
 
-  const hasBindingsForProgram = (program: number) =>
-    contextsWithBindings.some((c) => c.program === program);
+  const hasBindingsForProgram = (program: number) => {
+    if (!draft) return false;
+    return contextsWithBindings.some(
+      (c) =>
+        c.daw_slot === draft.daw_slot &&
+        c.preset_slot === draft.preset_slot &&
+        c.port_id === draft.port_id &&
+        c.channel === draft.channel &&
+        c.bank_msb === draft.bank_msb &&
+        c.bank_lsb === draft.bank_lsb &&
+        c.program === program
+    );
+  };
 
   async function onSaveAsDefaults() {
     if (!draft) return;
@@ -364,6 +471,80 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
           </select>
         </label>
       </div>
+
+      {/* Saved Contexts Section */}
+      {contextsWithBindings.length > 0 && (
+        <div style={{ display: "grid", gap: 8, padding: "12px", background: "rgba(0, 212, 255, 0.05)", borderRadius: "8px", border: "1px solid rgba(0, 212, 255, 0.2)" }}>
+          <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            Saved Contexts ({contextsWithBindings.length})
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {contextsWithBindings.map((ctx) => {
+              const label = ctx.label || `D${ctx.daw_slot} P${ctx.preset_slot} Port${ctx.port_id} Ch${ctx.channel + 1} M${ctx.bank_msb} L${ctx.bank_lsb} Prg${ctx.program}`;
+              const isCurrent =
+                draft &&
+                ctx.daw_slot === draft.daw_slot &&
+                ctx.preset_slot === draft.preset_slot &&
+                ctx.port_id === draft.port_id &&
+                ctx.channel === draft.channel &&
+                ctx.bank_msb === draft.bank_msb &&
+                ctx.bank_lsb === draft.bank_lsb &&
+                ctx.program === draft.program;
+
+              return (
+                <button
+                  key={ctx.id}
+                  onClick={() => jumpToContext(ctx)}
+                  className={isCurrent ? "btn-primary" : "btn"}
+                  style={{
+                    fontSize: "12px",
+                    padding: "6px 12px",
+                    opacity: isCurrent ? 1 : 0.85
+                  }}
+                  title={`${ctx.binding_count} binding(s)\nDAW: ${ctx.daw_slot}, Preset: ${ctx.preset_slot}, Port: ${ctx.port_id}, Ch: ${ctx.channel + 1}, MSB: ${ctx.bank_msb}, LSB: ${ctx.bank_lsb}, Prg: ${ctx.program}`}
+                >
+                  {label} ({ctx.binding_count})
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Current Context Label Editor */}
+          {currentContextId !== null && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255, 255, 255, 0.1)" }}>
+              <label style={{ fontSize: "12px", minWidth: "max-content" }}>Label for current context:</label>
+              {isEditingLabel ? (
+                <>
+                  <input
+                    type="text"
+                    value={contextLabel}
+                    onChange={(e) => setContextLabel(e.target.value)}
+                    placeholder="e.g. Ableton Live - Default"
+                    style={{ flex: 1 }}
+                    autoFocus
+                  />
+                  <button onClick={saveContextLabel} className="btn-secondary" style={{ fontSize: "12px", padding: "6px 12px" }}>
+                    Save
+                  </button>
+                  <button onClick={() => setIsEditingLabel(false)} className="btn" style={{ fontSize: "12px", padding: "6px 12px" }}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span style={{ flex: 1, opacity: 0.7, fontSize: "12px" }}>
+                    {contextLabel || "(no label)"}
+                  </span>
+                  <button onClick={() => setIsEditingLabel(true)} className="btn" style={{ fontSize: "12px", padding: "6px 12px" }}>
+                    {contextLabel ? "Edit" : "Add"} Label
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <button
