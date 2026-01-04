@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 # Start listener
+export DISPLAY=:0
 uvicorn app:app --host 127.0.0.1 --port 8765 --reload

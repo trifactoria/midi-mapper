@@ -309,6 +309,57 @@ async def load_and_apply_defaults() -> None:
 
 
 # -----------------------------
+# Midi Device Helpers 
+# -----------------------------
+def _clear_port_state(port_name: str) -> None:
+    # Clear any per-port/per-channel remembered state to avoid stale matches/fires
+    PORT_STATE.pop(port_name, None)
+    LAST_NOTE_CHANNEL.pop(port_name, None)
+
+    # Remove all per-channel state entries for this port
+    dead_keys = [k for k in CHAN_STATE.keys() if k[0] == port_name]
+    for k in dead_keys:
+        CHAN_STATE.pop(k, None)
+
+
+def _drain_input(inp: mido.ports.BaseInput) -> int:
+    """Read and discard all pending messages for this input."""
+    n = 0
+    for _ in inp.iter_pending():
+        n += 1
+    return n
+
+
+async def _on_device_added(port_name: str) -> None:
+    # Make sure DB has it
+    await ensure_ports_registered()
+
+    # Clear any stale state for this port
+    _clear_port_state(port_name)
+
+    # IMPORTANT: clear debounce so “old last fired” doesn’t cause weird gating
+    LAST_FIRED.clear()
+
+    # Reload defaults so ACTIVE_SELECTION + active_context_id are consistent
+    await load_and_apply_defaults()
+
+    # Optional but useful: if you want to best-effort “push” defaults back to device
+    # (only if your UI relies on the device being in a known bank/prog)
+    #
+    # try:
+    #     await midi_send_context(SendContextIn(**ACTIVE_SELECTION, output_name=None))
+    # except Exception:
+    #     pass
+
+
+async def _on_device_removed(port_name: str) -> None:
+    # Clear state so nothing remains “armed” for a device that’s gone
+    _clear_port_state(port_name)
+    LAST_FIRED.clear()
+
+
+
+# -----------------------------
 # Lifecycle
 # -----------------------------
 @app.on_event("startup")
@@ -1110,34 +1161,78 @@ ws_mgr = WSManager()
 
 
 async def midi_pump() -> None:
-    inputs: List[mido.ports.BaseInput] = []
-    try:
-        # Open all input ports that exist at startup
-        for name in mido.get_input_names():
+    inputs: Dict[str, mido.ports.BaseInput] = {}
+    last_names: set[str] = set()
+
+    async def refresh_ports() -> None:
+        nonlocal last_names
+
+        current = set(mido.get_input_names())
+
+        added = current - last_names
+        removed = last_names - current
+
+        # Close removed ports
+        for name in removed:
+            inp = inputs.pop(name, None)
+            if inp is not None:
+                try:
+                    # Drain anything pending *before* close (belt + suspenders)
+                    _drain_input(inp)
+                except Exception:
+                    pass
+                try:
+                    inp.close()
+                except Exception:
+                    pass
+            await _on_device_removed(name)
+
+        # Open added ports
+        for name in added:
             try:
-                inputs.append(mido.open_input(name))
+                inp = mido.open_input(name)
             except Exception:
                 continue
 
+            inputs[name] = inp
+
+            # CRITICAL: drain queued/buffered events immediately on open
+            try:
+                _drain_input(inp)
+            except Exception:
+                pass
+
+            await _on_device_added(name)
+
+        last_names = current
+
+    try:
+        # initial scan
+        await refresh_ports()
+
         while True:
+            # Hotplug detection (cheap + reliable)
+            await refresh_ports()
+
             v = await get_setting("keygrab_enabled")
             keygrab_enabled = True if v is None else (v.lower() == "true")
 
-            for inp in inputs:
+            for port_name, inp in list(inputs.items()):
+                # iter_pending() is the “queue” — we only want *fresh* events
                 for msg in inp.iter_pending():
                     # Track last NOTE channel separately
                     if msg.type in ("note_on", "note_off"):
-                        LAST_NOTE_CHANNEL[inp.name] = getattr(msg, "channel", 0)
+                        LAST_NOTE_CHANNEL[port_name] = getattr(msg, "channel", 0)
 
-                    pack = update_state(inp.name, msg)
-                    ctx_match = selection_matches_event(inp.name, msg, pack["derived"])
+                    pack = update_state(port_name, msg)
+                    ctx_match = selection_matches_event(port_name, msg, pack["derived"])
 
                     payload: Dict[str, Any] = {
                         "ts": time.time(),
-                        "port_name": inp.name,
+                        "port_name": port_name,
                         "type": msg.type,
                         "channel": getattr(msg, "channel", None),
-                        "effective_channel": effective_channel(inp.name, msg),
+                        "effective_channel": effective_channel(port_name, msg),
                         "note": getattr(msg, "note", None),
                         "velocity": getattr(msg, "velocity", None),
                         "cc": getattr(msg, "control", None),
@@ -1148,7 +1243,7 @@ async def midi_pump() -> None:
                         "derived_ch": pack["derived_ch"],
                         "derived_port": pack["derived_port"],
                         "context_match": ctx_match,
-                        "observed_note_channel": LAST_NOTE_CHANNEL.get(inp.name),
+                        "observed_note_channel": LAST_NOTE_CHANNEL.get(port_name),
                         "keygrab_enabled": keygrab_enabled,
                         "max_note": MAX_NOTE,
                     }
@@ -1179,7 +1274,6 @@ async def midi_pump() -> None:
                                 (ctx_id,),
                             )
 
-                        # Execute binding command if found
                         if binding:
                             binding_dict = dict(binding)
                             binding_id = binding_dict.get("id")
@@ -1189,35 +1283,27 @@ async def midi_pump() -> None:
                             notify_text = binding_dict.get("notify_text", "")
                             notify_emoji = binding_dict.get("notify_emoji", "")
 
-                            # Check require_armed (use keygrab_enabled as armed state)
                             armed = keygrab_enabled
                             can_execute = True
 
                             if require_armed and not armed:
                                 can_execute = False
 
-                            # Check debounce
-                            now = time.time() * 1000  # ms
+                            now = time.time() * 1000
                             last = LAST_FIRED.get(binding_id, 0)
                             if now - last < debounce_ms:
                                 can_execute = False
 
                             if can_execute:
-                                # Update last fired time
                                 LAST_FIRED[binding_id] = now
 
-                                # Execute command first (if configured)
                                 exec_result = None
                                 if command:
                                     exec_result = await safe_execute_command(command)
                                     payload["command_execution"] = exec_result
 
-                                # Send notification after command execution (if configured)
                                 if notify_text:
-                                    # Prepend error indicator if command failed
-                                    prefix = ""
-                                    if exec_result and not exec_result.get("ok"):
-                                        prefix = "❌ "
+                                    prefix = "❌ " if (exec_result and not exec_result.get("ok")) else ""
                                     notify_result = await send_notification(prefix + notify_text, notify_emoji)
                                     if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
                                         payload["notify_error"] = notify_result.get("notify_error")
@@ -1226,12 +1312,19 @@ async def midi_pump() -> None:
                     await ws_mgr.broadcast(payload)
 
             await asyncio.sleep(WS_POLL_INTERVAL)
+
     finally:
-        for inp in inputs:
+        # Shutdown cleanup
+        for name, inp in list(inputs.items()):
+            try:
+                _drain_input(inp)
+            except Exception:
+                pass
             try:
                 inp.close()
             except Exception:
                 pass
+        inputs.clear()
 
 
 @app.websocket("/ws/events")
