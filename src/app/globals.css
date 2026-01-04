@@ -180,3 +180,141 @@ option.has-bindings::before {
 .tooltip:hover .tooltip-content {
   visibility: visible;
 }
+
+/* =========================================================
+   Automatr – Converse embedded UI overrides (readability)
+   ========================================================= */
+
+.automatr-converse {
+  /* Ensure the embedded app can actually use the modal height */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+/* Converse uses its own layout; force it to fill our container */
+.automatr-converse converse-root,
+.automatr-converse .conversejs,
+.automatr-converse .conversejs .grid {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+/* Base typography + contrast */
+.automatr-converse {
+  --text-color: #111827;
+  --text-color-secondary: #374151;
+
+  --background-color: #ffffff;
+  --panel-background: #ffffff;
+  --chat-background: #ffffff;
+
+  --border-color: #e5e7eb;
+
+  /* Inputs */
+  --input-background-color: #ffffff;
+  --input-border-color: #d1d5db;
+  --input-text-color: #111827;
+  --input-placeholder-color: #6b7280;
+
+  /* Links + accents */
+  --brand-color: #2563eb;
+  --link-color: #2563eb;
+
+  /* Buttons */
+  --button-background-color: #2563eb;
+  --button-text-color: #ffffff;
+
+  /* Make everything larger / more readable */
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+/* Many Converse versions apply font sizing deeply */
+.automatr-converse .conversejs {
+  font-size: 15px !important;
+}
+
+/* Panels (roster/sidebar + chat) */
+.automatr-converse .conversejs .controlbox,
+.automatr-converse .conversejs .chatbox,
+.automatr-converse .conversejs .chatroom,
+.automatr-converse .conversejs .roompanel {
+  background: #ffffff !important;
+  color: #111827 !important;
+}
+
+/* Borders / separators */
+.automatr-converse .conversejs * {
+  border-color: #e5e7eb !important;
+}
+
+/* Message area: give more padding, improve contrast */
+.automatr-converse .conversejs .message, 
+.automatr-converse .conversejs .chat-msg__body,
+.automatr-converse .conversejs .chat-msg__text {
+  color: #111827 !important;
+}
+
+/* Improve timestamps / meta visibility */
+.automatr-converse .conversejs time,
+.automatr-converse .conversejs .chat-msg__time,
+.automatr-converse .conversejs .chat-msg__heading {
+  color: #6b7280 !important;
+}
+
+/* Make message bubbles easier to parse (gentle background) */
+.automatr-converse .conversejs .chat-msg {
+  padding: 8px 10px !important;
+  margin: 6px 0 !important;
+  border-radius: 10px !important;
+}
+
+/* If your build uses separate “message bubble” elements */
+.automatr-converse .conversejs .message__content,
+.automatr-converse .conversejs .chat-msg__content {
+  background: #f9fafb !important;
+  border: 1px solid #eef2f7 !important;
+  border-radius: 10px !important;
+  padding: 8px 10px !important;
+}
+
+/* Sent vs received (if the class exists in your version) */
+.automatr-converse .conversejs .chat-msg--sent .message__content,
+.automatr-converse .conversejs .chat-msg--sent .chat-msg__content {
+  background: #eff6ff !important;
+  border-color: #dbeafe !important;
+}
+
+/* Input row: make it obvious and usable */
+.automatr-converse .conversejs textarea,
+.automatr-converse .conversejs input[type="text"],
+.automatr-converse .conversejs input[type="password"] {
+  background: #ffffff !important;
+  color: #111827 !important;
+  border: 1px solid #d1d5db !important;
+  border-radius: 10px !important;
+  padding: 10px 12px !important;
+  font-size: 15px !important;
+}
+
+/* Buttons inside Converse */
+.automatr-converse .conversejs button,
+.automatr-converse .conversejs .button {
+  border-radius: 10px !important;
+}
+
+/* Make the roster (rooms/contacts list) readable */
+.automatr-converse .conversejs .list-item,
+.automatr-converse .conversejs .list-item__text,
+.automatr-converse .conversejs .roster-group,
+.automatr-converse .conversejs .roster-group__header {
+  color: #111827 !important;
+}
+
+/* Remove weird low-contrast icons if they appear too faint */
+.automatr-converse .conversejs svg {
+  opacity: 0.95;
+}
+
