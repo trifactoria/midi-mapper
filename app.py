@@ -138,15 +138,22 @@ app.add_middleware(
 # -----------------------------
 # DB helpers
 # -----------------------------
+async def db_connect() -> aiosqlite.Connection:
+    """Create a DB connection with foreign keys enabled and row factory set."""
+    db = await aiosqlite.connect(DB_PATH)
+    await db.execute("PRAGMA foreign_keys=ON")
+    db.row_factory = aiosqlite.Row
+    return db
+
+
 async def db_exec(sql: str, params: tuple = ()) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with await db_connect() as db:
         await db.execute(sql, params)
         await db.commit()
 
 
 async def db_fetchall(sql: str, params: tuple = ()) -> List[aiosqlite.Row]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with await db_connect() as db:
         cur = await db.execute(sql, params)
         return await cur.fetchall()
 
@@ -199,7 +206,7 @@ async def get_active_context_id() -> Optional[int]:
 
 async def gc_orphan_contexts() -> int:
     """Delete contexts with no bindings. Returns count of deleted contexts."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with await db_connect() as db:
         # Find orphan contexts
         cursor = await db.execute(
             """
@@ -213,7 +220,7 @@ async def gc_orphan_contexts() -> int:
 
 async def apply_migrations() -> None:
     """Apply database migrations if needed."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with await db_connect() as db:
         # Check if new columns exist
         cursor = await db.execute("PRAGMA table_info(bindings)")
         columns = await cursor.fetchall()
@@ -278,32 +285,13 @@ async def load_and_apply_defaults() -> None:
     ACTIVE_SELECTION["bank_lsb"] = int(bank_lsb) if bank_lsb else 0
     ACTIVE_SELECTION["program"] = int(program) if program else 0
 
-    # Get or create context for these defaults
-    row = await db_fetchone(
-        """
-        SELECT id FROM contexts
-        WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
-          AND bank_msb=? AND bank_lsb=? AND program=?
-        """,
-        (
-            int(daw_slot) if daw_slot else 0,
-            int(preset_slot) if preset_slot else 0,
-            int(port_id),
-            int(channel) if channel else 0,
-            int(bank_msb) if bank_msb else 0,
-            int(bank_lsb) if bank_lsb else 0,
-            int(program) if program else 0,
-        ),
-    )
-
-    if row:
-        context_id = row["id"]
-    else:
-        # Create context
-        await db_exec(
+    # Get or create context for these defaults (use single connection)
+    async with await db_connect() as db:
+        cur = await db.execute(
             """
-            INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            SELECT id FROM contexts
+            WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
+              AND bank_msb=? AND bank_lsb=? AND program=?
             """,
             (
                 int(daw_slot) if daw_slot else 0,
@@ -315,8 +303,29 @@ async def load_and_apply_defaults() -> None:
                 int(program) if program else 0,
             ),
         )
-        row2 = await db_fetchone("SELECT last_insert_rowid() AS id")
-        context_id = row2["id"]
+        row = await cur.fetchone()
+
+        if row:
+            context_id = row["id"]
+        else:
+            # Create context on same connection
+            cur = await db.execute(
+                """
+                INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(daw_slot) if daw_slot else 0,
+                    int(preset_slot) if preset_slot else 0,
+                    int(port_id),
+                    int(channel) if channel else 0,
+                    int(bank_msb) if bank_msb else 0,
+                    int(bank_lsb) if bank_lsb else 0,
+                    int(program) if program else 0,
+                ),
+            )
+            await db.commit()
+            context_id = cur.lastrowid
 
     # Set active_context_id
     await set_setting("active_context_id", str(context_id))
@@ -586,42 +595,47 @@ async def midi_send_context(ctx: SendContextIn) -> Dict[str, Any]:
 
 @app.post("/api/contexts/get_or_create")
 async def get_or_create_context(ctx: ContextIn) -> Dict[str, Any]:
-    row = await db_fetchone(
-        """
-        SELECT id FROM contexts
-        WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
-          AND bank_msb=? AND bank_lsb=? AND program=?
-        """,
-        (
-            ctx.daw_slot,
-            ctx.preset_slot,
-            ctx.port_id,
-            ctx.channel,
-            ctx.bank_msb,
-            ctx.bank_lsb,
-            ctx.program,
-        ),
-    )
-    if row:
-        return {"context_id": row["id"]}
+    """Get or create a context. Uses single connection to ensure correct lastrowid."""
+    async with await db_connect() as db:
+        # Check if context exists
+        cur = await db.execute(
+            """
+            SELECT id FROM contexts
+            WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
+              AND bank_msb=? AND bank_lsb=? AND program=?
+            """,
+            (
+                ctx.daw_slot,
+                ctx.preset_slot,
+                ctx.port_id,
+                ctx.channel,
+                ctx.bank_msb,
+                ctx.bank_lsb,
+                ctx.program,
+            ),
+        )
+        row = await cur.fetchone()
+        if row:
+            return {"context_id": row["id"]}
 
-    await db_exec(
-        """
-        INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            ctx.daw_slot,
-            ctx.preset_slot,
-            ctx.port_id,
-            ctx.channel,
-            ctx.bank_msb,
-            ctx.bank_lsb,
-            ctx.program,
-        ),
-    )
-    row2 = await db_fetchone("SELECT last_insert_rowid() AS id")
-    return {"context_id": row2["id"]}
+        # Create new context on same connection
+        cur = await db.execute(
+            """
+            INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ctx.daw_slot,
+                ctx.preset_slot,
+                ctx.port_id,
+                ctx.channel,
+                ctx.bank_msb,
+                ctx.bank_lsb,
+                ctx.program,
+            ),
+        )
+        await db.commit()
+        return {"context_id": cur.lastrowid}
 
 
 # -----------------------------
@@ -1008,6 +1022,7 @@ class ImportContextIn(BaseModel):
 async def import_context(data: ImportContextIn) -> Dict[str, Any]:
     """Import a context with bindings from export JSON.
 
+    Uses single transaction for atomicity.
     Resolves port_name to port_id (creates port if needed).
     Modes:
     - "merge": Add/update bindings (keep existing ones not in payload)
@@ -1027,40 +1042,23 @@ async def import_context(data: ImportContextIn) -> Dict[str, Any]:
     if not port_name:
         return {"ok": False, "error": "Missing port_name in payload"}
 
-    # Insert or ignore port
-    await db_exec("INSERT OR IGNORE INTO ports(name) VALUES (?)", (port_name,))
-    port_row = await db_fetchone("SELECT id FROM ports WHERE name=?", (port_name,))
-    if not port_row:
-        return {"ok": False, "error": f"Failed to resolve port: {port_name}"}
+    # Use single transaction for entire import
+    async with await db_connect() as db:
+        # Insert or ignore port
+        await db.execute("INSERT OR IGNORE INTO ports(name) VALUES (?)", (port_name,))
+        cur = await db.execute("SELECT id FROM ports WHERE name=?", (port_name,))
+        port_row = await cur.fetchone()
+        if not port_row:
+            return {"ok": False, "error": f"Failed to resolve port: {port_name}"}
 
-    port_id = port_row["id"]
+        port_id = port_row["id"]
 
-    # Get or create context
-    context_row = await db_fetchone(
-        """
-        SELECT id FROM contexts
-        WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
-          AND bank_msb=? AND bank_lsb=? AND program=?
-        """,
-        (
-            ctx_data.get("daw_slot", 0),
-            ctx_data.get("preset_slot", 0),
-            port_id,
-            ctx_data.get("channel", 0),
-            ctx_data.get("bank_msb", 0),
-            ctx_data.get("bank_lsb", 0),
-            ctx_data.get("program", 0),
-        ),
-    )
-
-    if context_row:
-        context_id = context_row["id"]
-    else:
-        # Create context
-        await db_exec(
+        # Get or create context
+        cur = await db.execute(
             """
-            INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            SELECT id FROM contexts
+            WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
+              AND bank_msb=? AND bank_lsb=? AND program=?
             """,
             (
                 ctx_data.get("daw_slot", 0),
@@ -1072,33 +1070,145 @@ async def import_context(data: ImportContextIn) -> Dict[str, Any]:
                 ctx_data.get("program", 0),
             ),
         )
-        id_row = await db_fetchone("SELECT last_insert_rowid() AS id")
-        context_id = id_row["id"]
+        context_row = await cur.fetchone()
 
-    # Set label if provided
-    label = ctx_data.get("label")
-    if label and label.strip():
-        await db_exec(
-            """
-            INSERT INTO context_labels (context_id, label)
-            VALUES (?, ?)
-            ON CONFLICT(context_id) DO UPDATE SET label = excluded.label
-            """,
-            (context_id, label.strip()),
+        if context_row:
+            context_id = context_row["id"]
+        else:
+            # Create context on same connection
+            cur = await db.execute(
+                """
+                INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ctx_data.get("daw_slot", 0),
+                    ctx_data.get("preset_slot", 0),
+                    port_id,
+                    ctx_data.get("channel", 0),
+                    ctx_data.get("bank_msb", 0),
+                    ctx_data.get("bank_lsb", 0),
+                    ctx_data.get("program", 0),
+                ),
+            )
+            context_id = cur.lastrowid
+
+        # Set label if provided
+        label = ctx_data.get("label")
+        if label and label.strip():
+            await db.execute(
+                """
+                INSERT INTO context_labels (context_id, label)
+                VALUES (?, ?)
+                ON CONFLICT(context_id) DO UPDATE SET label = excluded.label
+                """,
+                (context_id, label.strip()),
+            )
+
+        # Replace mode: delete existing bindings first
+        if mode == "replace":
+            await db.execute("DELETE FROM bindings WHERE context_id=?", (context_id,))
+
+        # Import bindings
+        for b in bindings_data:
+            await db.execute(
+                """
+                INSERT INTO bindings(
+                  context_id, enabled, trig_type, note, cc, value_min, value_max,
+                  pitch_min, pitch_max, command, debounce_ms, require_armed,
+                  notes, notify_text, notify_emoji
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(context_id, trig_type, note, cc)
+                DO UPDATE SET
+                  enabled=excluded.enabled,
+                  value_min=excluded.value_min,
+                  value_max=excluded.value_max,
+                  pitch_min=excluded.pitch_min,
+                  pitch_max=excluded.pitch_max,
+                  command=excluded.command,
+                  debounce_ms=excluded.debounce_ms,
+                  require_armed=excluded.require_armed,
+                  notes=excluded.notes,
+                  notify_text=excluded.notify_text,
+                  notify_emoji=excluded.notify_emoji
+                """,
+                (
+                    context_id,
+                    b.get("enabled", 1),
+                    b.get("trig_type"),
+                    b.get("note"),
+                    b.get("cc"),
+                    b.get("value_min"),
+                    b.get("value_max"),
+                    b.get("pitch_min"),
+                    b.get("pitch_max"),
+                    b.get("command", ""),
+                    b.get("debounce_ms", 200),
+                    b.get("require_armed", 1),
+                    b.get("notes", ""),
+                    b.get("notify_text", ""),
+                    b.get("notify_emoji", ""),
+                ),
+            )
+
+        # Commit entire transaction
+        await db.commit()
+
+        # Count final bindings
+        cur = await db.execute(
+            "SELECT COUNT(*) as count FROM bindings WHERE context_id=?",
+            (context_id,)
         )
+        count_row = await cur.fetchone()
+        binding_count = count_row["count"] if count_row else 0
 
-    # Replace mode: delete existing bindings first
-    if mode == "replace":
-        await db_exec("DELETE FROM bindings WHERE context_id=?", (context_id,))
+        return {"ok": True, "context_id": context_id, "binding_count": binding_count}
 
-    # Import bindings
-    for b in bindings_data:
-        await db_exec(
+
+@app.post("/api/bindings/set")
+async def set_binding(b: BindingIn) -> Dict[str, Any]:
+    """Set/update a binding. Uses single connection to ensure correct lastrowid."""
+    async with await db_connect() as db:
+        # If id is provided, do direct UPDATE by id (more reliable for edits)
+        if b.id is not None:
+            await db.execute(
+                """
+                UPDATE bindings
+                SET context_id=?, enabled=?, trig_type=?, note=?, cc=?,
+                    value_min=?, value_max=?, pitch_min=?, pitch_max=?,
+                    command=?, debounce_ms=?, require_armed=?,
+                    notes=?, notify_text=?, notify_emoji=?
+                WHERE id=?
+                """,
+                (
+                    b.context_id,
+                    b.enabled,
+                    b.trig_type,
+                    b.note,
+                    b.cc,
+                    b.value_min,
+                    b.value_max,
+                    b.pitch_min,
+                    b.pitch_max,
+                    b.command,
+                    b.debounce_ms,
+                    b.require_armed,
+                    b.notes,
+                    b.notify_text,
+                    b.notify_emoji,
+                    b.id,
+                ),
+            )
+            await db.commit()
+            return {"ok": True, "binding_id": b.id}
+
+        # Otherwise, use UPSERT logic (for new bindings) on same connection
+        cur = await db.execute(
             """
             INSERT INTO bindings(
-              context_id, enabled, trig_type, note, cc, value_min, value_max,
-              pitch_min, pitch_max, command, debounce_ms, require_armed,
-              notes, notify_text, notify_emoji
+              context_id, enabled, trig_type, note, cc, value_min, value_max, pitch_min, pitch_max,
+              command, debounce_ms, require_armed, notes, notify_text, notify_emoji
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(context_id, trig_type, note, cc)
@@ -1116,48 +1226,6 @@ async def import_context(data: ImportContextIn) -> Dict[str, Any]:
               notify_emoji=excluded.notify_emoji
             """,
             (
-                context_id,
-                b.get("enabled", 1),
-                b.get("trig_type"),
-                b.get("note"),
-                b.get("cc"),
-                b.get("value_min"),
-                b.get("value_max"),
-                b.get("pitch_min"),
-                b.get("pitch_max"),
-                b.get("command", ""),
-                b.get("debounce_ms", 200),
-                b.get("require_armed", 1),
-                b.get("notes", ""),
-                b.get("notify_text", ""),
-                b.get("notify_emoji", ""),
-            ),
-        )
-
-    # Count final bindings
-    count_row = await db_fetchone(
-        "SELECT COUNT(*) as count FROM bindings WHERE context_id=?",
-        (context_id,)
-    )
-    binding_count = count_row["count"] if count_row else 0
-
-    return {"ok": True, "context_id": context_id, "binding_count": binding_count}
-
-
-@app.post("/api/bindings/set")
-async def set_binding(b: BindingIn) -> Dict[str, Any]:
-    # If id is provided, do direct UPDATE by id (more reliable for edits)
-    if b.id is not None:
-        await db_exec(
-            """
-            UPDATE bindings
-            SET context_id=?, enabled=?, trig_type=?, note=?, cc=?,
-                value_min=?, value_max=?, pitch_min=?, pitch_max=?,
-                command=?, debounce_ms=?, require_armed=?,
-                notes=?, notify_text=?, notify_emoji=?
-            WHERE id=?
-            """,
-            (
                 b.context_id,
                 b.enabled,
                 b.trig_type,
@@ -1173,57 +1241,11 @@ async def set_binding(b: BindingIn) -> Dict[str, Any]:
                 b.notes,
                 b.notify_text,
                 b.notify_emoji,
-                b.id,
             ),
         )
-        return {"ok": True, "binding_id": b.id}
+        await db.commit()
 
-    # Otherwise, use UPSERT logic (for new bindings)
-    await db_exec(
-        """
-        INSERT INTO bindings(
-          context_id, enabled, trig_type, note, cc, value_min, value_max, pitch_min, pitch_max,
-          command, debounce_ms, require_armed, notes, notify_text, notify_emoji
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(context_id, trig_type, note, cc)
-        DO UPDATE SET
-          enabled=excluded.enabled,
-          value_min=excluded.value_min,
-          value_max=excluded.value_max,
-          pitch_min=excluded.pitch_min,
-          pitch_max=excluded.pitch_max,
-          command=excluded.command,
-          debounce_ms=excluded.debounce_ms,
-          require_armed=excluded.require_armed,
-          notes=excluded.notes,
-          notify_text=excluded.notify_text,
-          notify_emoji=excluded.notify_emoji
-        """,
-        (
-            b.context_id,
-            b.enabled,
-            b.trig_type,
-            b.note,
-            b.cc,
-            b.value_min,
-            b.value_max,
-            b.pitch_min,
-            b.pitch_max,
-            b.command,
-            b.debounce_ms,
-            b.require_armed,
-            b.notes,
-            b.notify_text,
-            b.notify_emoji,
-        ),
-    )
-
-    # Get the binding_id that was just inserted
-    row = await db_fetchone("SELECT last_insert_rowid() AS id")
-    binding_id = row["id"] if row else None
-
-    return {"ok": True, "binding_id": binding_id}
+        return {"ok": True, "binding_id": cur.lastrowid}
 
 
 @app.post("/api/bindings/remove")
