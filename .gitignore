@@ -41,3 +41,5 @@ include/
 # Misc
 .python-version # usually not a good idea to lock to a specific tiny version
 *.zip
+makezip
+midi_map.db
