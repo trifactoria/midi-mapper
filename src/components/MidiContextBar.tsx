@@ -43,11 +43,13 @@ type ContextWithBindings = {
   program: number;
   binding_count: number;
   label: string | null;
+  display_label: string;
 };
 
 export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [ports, setPorts] = useState<Port[]>([]);
   const [err, setErr] = useState<string>("");
+  const [contextsLoadError, setContextsLoadError] = useState<string>("");
   const [contextsWithBindings, setContextsWithBindings] = useState<ContextWithBindings[]>([]);
 
   // Local draft (controlled-ish)
@@ -62,6 +64,13 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [contextLabel, setContextLabel] = useState<string>("");
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [modalLabelInput, setModalLabelInput] = useState("");
+
+  // Import/Export modal
+  const [showImportExportModal, setShowImportExportModal] = useState(false);
+  const [exportJson, setExportJson] = useState<string>("");
+  const [importJson, setImportJson] = useState<string>("");
+  const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
+  const [importExportStatus, setImportExportStatus] = useState<string>("");
 
   const debounceRef = useRef<number | null>(null);
   const lastContextKeyRef = useRef<string>("");
@@ -87,20 +96,23 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, []);
 
+  // Refresh contexts list (can be called manually or on events)
+  const refreshContexts = async () => {
+    try {
+      const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
+      setContextsWithBindings(contexts);
+      setContextsLoadError(""); // Clear any previous error
+    } catch (e: any) {
+      const errorMsg = e?.message || String(e);
+      setContextsLoadError(`Failed to load contexts: ${errorMsg}`);
+      console.error("Failed to load contexts:", e);
+    }
+  };
+
   // Load ALL contexts with bindings once (for cascading hints)
   useEffect(() => {
-    let alive = true;
-    apiGet<ContextWithBindings[]>("/api/contexts/with_bindings")
-      .then((contexts) => {
-        if (!alive) return;
-        setContextsWithBindings(contexts);
-      })
-      .catch(() => {
-        // Silent fail - hints are optional
-      });
-    return () => {
-      alive = false;
-    };
+    refreshContexts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Initialize header from defaults or fallback
@@ -266,14 +278,82 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     try {
       await apiPost(`/api/contexts/${currentContextId}/label`, { label });
       // Refresh contexts list to show new label
-      const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
-      setContextsWithBindings(contexts);
+      await refreshContexts();
       setContextLabel(label);
       setShowSaveModal(false);
       setSendStatus("Context saved!");
       setTimeout(() => setSendStatus(""), 2000);
     } catch (e: any) {
       setSendStatus(e?.message ?? "Save failed");
+    }
+  };
+
+  // Open Import/Export modal
+  const openImportExportModal = async () => {
+    if (currentContextId === null) {
+      setImportExportStatus("No context selected");
+      return;
+    }
+
+    setImportExportStatus("Loading...");
+    setShowImportExportModal(true);
+
+    try {
+      // Fetch export JSON
+      const exportData = await apiGet<any>(`/api/contexts/${currentContextId}/export`);
+      setExportJson(JSON.stringify(exportData, null, 2));
+      setImportExportStatus("");
+    } catch (e: any) {
+      setImportExportStatus(e?.message ?? "Export failed");
+    }
+  };
+
+  // Copy export JSON to clipboard
+  const copyExportJson = async () => {
+    try {
+      await navigator.clipboard.writeText(exportJson);
+      setImportExportStatus("Copied to clipboard!");
+      setTimeout(() => setImportExportStatus(""), 2000);
+    } catch (e) {
+      setImportExportStatus("Failed to copy to clipboard");
+    }
+  };
+
+  // Import context from JSON
+  const importContext = async () => {
+    if (!importJson.trim()) {
+      setImportExportStatus("Please paste JSON to import");
+      return;
+    }
+
+    setImportExportStatus("Importing...");
+
+    try {
+      const payload = JSON.parse(importJson);
+      const result = await apiPost<{ ok: boolean; context_id: number; binding_count: number }>("/api/contexts/import", {
+        payload,
+        mode: importMode,
+      });
+
+      if (result.ok) {
+        // Refresh contexts list
+        await refreshContexts();
+
+        // Switch to the imported context
+        onContextId(result.context_id);
+        setCurrentContextId(result.context_id);
+
+        setImportExportStatus(`Imported ${result.binding_count} bindings!`);
+        setTimeout(() => {
+          setShowImportExportModal(false);
+          setImportJson("");
+          setImportExportStatus("");
+        }, 1500);
+      } else {
+        setImportExportStatus("Import failed");
+      }
+    } catch (e: any) {
+      setImportExportStatus(e?.message ?? "Invalid JSON or import failed");
     }
   };
 
@@ -382,6 +462,15 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
         </div>
       ) : null}
 
+      {contextsLoadError ? (
+        <div style={{ padding: 10, border: "1px solid tomato", color: "tomato", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{contextsLoadError}</span>
+          <button onClick={refreshContexts} className="btn" style={{ padding: "4px 12px", fontSize: "12px" }}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
       {/* Saved Contexts Dropdown & Save Button */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px", background: "rgba(0, 212, 255, 0.05)", borderRadius: "8px", border: "1px solid rgba(0, 212, 255, 0.2)" }}>
         {contextsWithBindings.length > 0 ? (
@@ -421,6 +510,23 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             >
               {currentContext?.label ? "Rename Context" : "Save Context As..."}
             </button>
+            <button
+              onClick={openImportExportModal}
+              className="btn"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              disabled={currentContextId === null}
+              title="Import or export context bindings"
+            >
+              Import/Export
+            </button>
+            <button
+              onClick={refreshContexts}
+              className="btn"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              title="Refresh contexts list"
+            >
+              ⟳ Refresh
+            </button>
           </>
         ) : (
           <>
@@ -435,6 +541,23 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
               title="Save current context with a custom name"
             >
               Save Context As...
+            </button>
+            <button
+              onClick={openImportExportModal}
+              className="btn"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              disabled={currentContextId === null}
+              title="Import or export context bindings"
+            >
+              Import/Export
+            </button>
+            <button
+              onClick={refreshContexts}
+              className="btn"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              title="Refresh contexts list"
+            >
+              ⟳ Refresh
             </button>
           </>
         )}
@@ -646,6 +769,143 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             </button>
             <button onClick={saveCurrentContext} className="btn-secondary" style={{ padding: "8px 20px" }}>
               {currentContext?.label ? "Rename" : "Save"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Import/Export Modal */}
+      <Modal
+        isOpen={showImportExportModal}
+        onClose={() => {
+          setShowImportExportModal(false);
+          setImportJson("");
+          setImportExportStatus("");
+        }}
+        title="Import/Export Context"
+      >
+        <div style={{ display: "grid", gap: 20 }}>
+          {/* Status message */}
+          {importExportStatus && (
+            <div
+              style={{
+                padding: "10px",
+                background: "rgba(0, 212, 255, 0.1)",
+                border: "1px solid rgba(0, 212, 255, 0.3)",
+                borderRadius: "6px",
+                fontSize: "13px",
+                textAlign: "center",
+              }}
+            >
+              {importExportStatus}
+            </div>
+          )}
+
+          {/* Export Section */}
+          <div>
+            <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "8px", color: "var(--accent)" }}>
+              Export Current Context
+            </div>
+            <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "10px" }}>
+              Copy the JSON below to back up or share this context configuration.
+            </div>
+            <textarea
+              value={exportJson}
+              readOnly
+              style={{
+                width: "100%",
+                height: "150px",
+                fontSize: "11px",
+                fontFamily: "monospace",
+                resize: "vertical",
+                background: "rgba(0, 0, 0, 0.3)",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                borderRadius: "4px",
+                padding: "10px",
+              }}
+            />
+            <button
+              onClick={copyExportJson}
+              className="btn-secondary"
+              style={{ marginTop: "8px", fontSize: "13px", padding: "8px 16px" }}
+            >
+              Copy to Clipboard
+            </button>
+          </div>
+
+          {/* Divider */}
+          <div style={{ height: "1px", background: "rgba(255, 255, 255, 0.1)" }} />
+
+          {/* Import Section */}
+          <div>
+            <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "8px", color: "var(--accent)" }}>
+              Import Context
+            </div>
+            <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "10px" }}>
+              Paste exported JSON to restore or load a context configuration.
+            </div>
+            <textarea
+              value={importJson}
+              onChange={(e) => setImportJson(e.target.value)}
+              placeholder='Paste exported JSON here (e.g., {"version": 1, "context": {...}, "bindings": [...]})'
+              style={{
+                width: "100%",
+                height: "150px",
+                fontSize: "11px",
+                fontFamily: "monospace",
+                resize: "vertical",
+                background: "rgba(0, 0, 0, 0.3)",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                borderRadius: "4px",
+                padding: "10px",
+              }}
+            />
+
+            {/* Import mode selection */}
+            <div style={{ marginTop: "12px", display: "flex", gap: 16, alignItems: "center" }}>
+              <label style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="import-mode"
+                  value="merge"
+                  checked={importMode === "merge"}
+                  onChange={() => setImportMode("merge")}
+                />
+                <span>Merge (keep existing bindings)</span>
+              </label>
+              <label style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="import-mode"
+                  value="replace"
+                  checked={importMode === "replace"}
+                  onChange={() => setImportMode("replace")}
+                />
+                <span>Replace (delete existing bindings)</span>
+              </label>
+            </div>
+
+            <button
+              onClick={importContext}
+              className="btn-secondary"
+              style={{ marginTop: "12px", fontSize: "13px", padding: "8px 16px" }}
+            >
+              Import
+            </button>
+          </div>
+
+          {/* Close button */}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
+            <button
+              onClick={() => {
+                setShowImportExportModal(false);
+                setImportJson("");
+                setImportExportStatus("");
+              }}
+              className="btn"
+              style={{ padding: "8px 20px" }}
+            >
+              Close
             </button>
           </div>
         </div>
