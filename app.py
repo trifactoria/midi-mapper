@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import shutil
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -123,6 +124,15 @@ ACTIVE_SELECTION: Dict[str, Any] = {
 # Debounce tracking: binding_id -> last_fired_timestamp
 LAST_FIRED: Dict[int, float] = {}
 
+# Headless service mode state
+# Port registry for hotplug support: port_name -> mido input instance
+MIDI_PORT_REGISTRY: Dict[str, Any] = {}
+
+# Track last notified context to avoid spam
+LAST_NOTIFIED_CONTEXT_ID: Optional[int] = None
+LAST_NOTIFIED_SELECTION: Optional[Dict[str, Any]] = None
+LAST_CONTEXT_NOTIFICATION_TIME: float = 0
+
 # -----------------------------
 # FastAPI
 # -----------------------------
@@ -207,6 +217,20 @@ async def get_active_context_id() -> Optional[int]:
     if not v:
         return None
     return int(v) if v.isdigit() else None
+
+
+async def get_follow_incoming_selection() -> bool:
+    """Get follow_incoming_selection setting (default: true)."""
+    v = await get_setting("follow_incoming_selection")
+    # Default to true if not set
+    return True if v is None else (v.lower() == "true")
+
+
+async def get_auto_create_context_on_follow() -> bool:
+    """Get auto_create_context_on_follow setting (default: false)."""
+    v = await get_setting("auto_create_context_on_follow")
+    # Default to false
+    return False if v is None else (v.lower() == "true")
 
 
 async def gc_orphan_contexts() -> int:
@@ -336,6 +360,185 @@ async def load_and_apply_defaults() -> None:
     await set_setting("active_context_id", str(context_id))
 
 
+async def find_or_create_context_for_selection(
+    port_name: str,
+    channel: int,
+    bank_msb: int,
+    bank_lsb: int,
+    program: int,
+    auto_create: bool = False,
+) -> Optional[int]:
+    """Find or optionally create a context matching the given selection.
+
+    Returns context_id if found/created, None if not found and auto_create=False.
+    """
+    # Get port_id from port_name
+    port_row = await db_fetchone("SELECT id FROM ports WHERE name=?", (port_name,))
+    if not port_row:
+        # Port not registered - register it now
+        await db_exec("INSERT OR IGNORE INTO ports(name) VALUES (?)", (port_name,))
+        port_row = await db_fetchone("SELECT id FROM ports WHERE name=?", (port_name,))
+        if not port_row:
+            return None
+
+    port_id = port_row["id"]
+
+    # Get default daw_slot and preset_slot
+    daw_slot = await get_setting("default_daw_slot")
+    preset_slot = await get_setting("default_preset_slot")
+    daw_slot = int(daw_slot) if daw_slot else 0
+    preset_slot = int(preset_slot) if preset_slot else 0
+
+    # Look for exact match
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT id FROM contexts
+            WHERE daw_slot=? AND preset_slot=? AND port_id=? AND channel=?
+              AND bank_msb=? AND bank_lsb=? AND program=?
+            """,
+            (daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program),
+        )
+        row = await cur.fetchone()
+
+        if row:
+            return row["id"]
+
+        # Not found - create if requested
+        if auto_create:
+            cur = await db.execute(
+                """
+                INSERT INTO contexts(daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (daw_slot, preset_slot, port_id, channel, bank_msb, bank_lsb, program),
+            )
+            await db.commit()
+            return cur.lastrowid
+
+    return None
+
+
+async def notify_context_change(context_id: int, port_name: str, channel: int, bank_msb: int, bank_lsb: int, program: int) -> None:
+    """Send notification about active context change.
+
+    Rate-limited to prevent spam (max once per 500ms).
+    Only notifies if context_id or selection header actually changed.
+    """
+    global LAST_NOTIFIED_CONTEXT_ID, LAST_NOTIFIED_SELECTION, LAST_CONTEXT_NOTIFICATION_TIME
+
+    now = time.time()
+    current_selection = {
+        "port_name": port_name,
+        "channel": channel,
+        "bank_msb": bank_msb,
+        "bank_lsb": bank_lsb,
+        "program": program,
+    }
+
+    # Check if changed
+    if LAST_NOTIFIED_CONTEXT_ID == context_id and LAST_NOTIFIED_SELECTION == current_selection:
+        return
+
+    # Rate limit (500ms)
+    if now - LAST_CONTEXT_NOTIFICATION_TIME < 0.5:
+        return
+
+    # Get context label
+    label_row = await db_fetchone("SELECT label FROM context_labels WHERE context_id = ?", (context_id,))
+    if label_row and label_row["label"]:
+        label = label_row["label"]
+    else:
+        # Compute default label
+        ctx_row = await db_fetchone(
+            "SELECT COUNT(*) as binding_count FROM bindings WHERE context_id = ?",
+            (context_id,)
+        )
+        binding_count = ctx_row["binding_count"] if ctx_row else 0
+        label = f"Unnamed Context ({binding_count} bindings, ch {channel})"
+
+    # Get daw_slot and preset_slot (if used)
+    daw_slot = await get_setting("default_daw_slot")
+    preset_slot = await get_setting("default_preset_slot")
+    daw_slot = int(daw_slot) if daw_slot else 0
+    preset_slot = int(preset_slot) if preset_slot else 0
+
+    # Format notification body
+    body = (
+        f'Active context: "{label}" (id={context_id}) | '
+        f'port="{port_name}" ch={channel} msb={bank_msb} lsb={bank_lsb} prog={program} '
+        f'(daw={daw_slot} preset={preset_slot})'
+    )
+
+    await notify("midi-mapper", body)
+
+    # Update tracking
+    LAST_NOTIFIED_CONTEXT_ID = context_id
+    LAST_NOTIFIED_SELECTION = current_selection
+    LAST_CONTEXT_NOTIFICATION_TIME = now
+
+
+async def hotplug_scanner() -> None:
+    """Background task that periodically scans for MIDI device changes.
+
+    Detects added/removed ports and updates MIDI_PORT_REGISTRY accordingly.
+    Sends notifications for device changes.
+    """
+    known_ports: set = set()
+    scan_interval = 1.0  # seconds
+
+    while True:
+        try:
+            await asyncio.sleep(scan_interval)
+
+            current_ports = set(mido.get_input_names())
+
+            added = current_ports - known_ports
+            removed = known_ports - current_ports
+
+            # Handle added ports
+            for port_name in added:
+                try:
+                    # Open port
+                    inp = mido.open_input(port_name)
+                    MIDI_PORT_REGISTRY[port_name] = inp
+                    print(f"[hotplug] Opened MIDI input: {port_name}")
+                except Exception as e:
+                    print(f"[hotplug] Failed to open {port_name}: {e}", file=sys.stderr)
+
+            # Handle removed ports
+            for port_name in removed:
+                inp = MIDI_PORT_REGISTRY.pop(port_name, None)
+                if inp:
+                    try:
+                        inp.close()
+                        print(f"[hotplug] Closed MIDI input: {port_name}")
+                    except Exception:
+                        pass
+
+            # Send notifications if changes detected
+            if added or removed:
+                # Register new ports in DB
+                for port_name in added:
+                    await db_exec("INSERT OR IGNORE INTO ports(name) VALUES (?)", (port_name,))
+
+                # Build notification message
+                parts = []
+                if added:
+                    parts.append(f"Added: {', '.join(sorted(added))}")
+                if removed:
+                    parts.append(f"Removed: {', '.join(sorted(removed))}")
+
+                body = " | ".join(parts)
+                await notify("midi-mapper", body)
+
+            known_ports = current_ports
+
+        except Exception as e:
+            print(f"[hotplug] Scanner error: {e}", file=sys.stderr)
+            await asyncio.sleep(scan_interval)
+
+
 # -----------------------------
 # Lifecycle
 # -----------------------------
@@ -346,7 +549,25 @@ async def _startup() -> None:
     await gc_orphan_contexts()
     await ensure_ports_registered()
     await load_and_apply_defaults()
+
+    # Initialize default settings for headless mode if not set
+    if await get_setting("follow_incoming_selection") is None:
+        await set_setting("follow_incoming_selection", "true")
+    if await get_setting("auto_create_context_on_follow") is None:
+        await set_setting("auto_create_context_on_follow", "false")
+
+    # Initialize MIDI port registry with currently available ports
+    for port_name in mido.get_input_names():
+        try:
+            inp = mido.open_input(port_name)
+            MIDI_PORT_REGISTRY[port_name] = inp
+            print(f"[startup] Opened MIDI input: {port_name}")
+        except Exception as e:
+            print(f"[startup] Failed to open {port_name}: {e}", file=sys.stderr)
+
+    # Start background tasks
     asyncio.create_task(midi_pump())
+    asyncio.create_task(hotplug_scanner())
 
 
 @app.on_event("shutdown")
@@ -358,6 +579,14 @@ async def _shutdown() -> None:
         except Exception:
             pass
         OUTPUT_PORT_CACHE.pop(name, None)
+
+    # Close all input ports from registry
+    for name, inp in list(MIDI_PORT_REGISTRY.items()):
+        try:
+            inp.close()
+        except Exception:
+            pass
+        MIDI_PORT_REGISTRY.pop(name, None)
 
 
 # -----------------------------
@@ -805,6 +1034,33 @@ async def send_notification(notify_text: str, notify_emoji: str = "") -> Dict[st
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "notify_error": f"Failed to execute notify-send: {e}"}
+
+
+async def notify(title: str, body: str) -> None:
+    """Simple notify-send helper for system notifications.
+
+    Sends desktop notification. If notify-send fails, logs to stderr and continues
+    (does not crash).
+    """
+    notify_send = shutil.which("notify-send", path=EXEC_PATH)
+    if not notify_send:
+        print(f"notify-send not available: {title}: {body}", file=sys.stderr)
+        return
+
+    try:
+        env = os.environ.copy()
+        env["PATH"] = EXEC_PATH
+        proc = await asyncio.create_subprocess_exec(
+            notify_send,
+            title,
+            body,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        await proc.wait()
+    except Exception as e:
+        print(f"notify-send failed: {title}: {body} ({e})", file=sys.stderr)
 
 
 @app.get("/api/contexts/{context_id}/bindings")
@@ -1410,6 +1666,76 @@ async def mouse_mode_set(enabled: bool) -> Dict[str, Any]:
     return {"ok": True, "enabled": enabled}
 
 
+@app.get("/api/runtime_state")
+async def get_runtime_state() -> Dict[str, Any]:
+    """Debug endpoint: get current headless service state.
+
+    Returns:
+    - currently observed selection (port/channel/msb/lsb/program)
+    - active_context_id
+    - active context label and display_label
+    - list of currently opened MIDI inputs
+    - follow mode settings
+    """
+    # Get active context info
+    ctx_id = await get_active_context_id()
+    ctx_info = None
+    if ctx_id is not None:
+        # Get context details
+        ctx_row = await db_fetchone(
+            """
+            SELECT c.*, p.name as port_name, cl.label
+            FROM contexts c
+            LEFT JOIN ports p ON c.port_id = p.id
+            LEFT JOIN context_labels cl ON c.id = cl.context_id
+            WHERE c.id = ?
+            """,
+            (ctx_id,)
+        )
+        if ctx_row:
+            ctx_dict = dict(ctx_row)
+            # Get binding count
+            binding_count_row = await db_fetchone(
+                "SELECT COUNT(*) as count FROM bindings WHERE context_id = ?",
+                (ctx_id,)
+            )
+            binding_count = binding_count_row["count"] if binding_count_row else 0
+
+            # Compute display_label
+            if ctx_dict["label"]:
+                display_label = ctx_dict["label"]
+            else:
+                display_label = f"Unnamed Context ({binding_count} bindings, ch {ctx_dict['channel']})"
+
+            ctx_info = {
+                "id": ctx_id,
+                "daw_slot": ctx_dict["daw_slot"],
+                "preset_slot": ctx_dict["preset_slot"],
+                "port_id": ctx_dict["port_id"],
+                "port_name": ctx_dict["port_name"],
+                "channel": ctx_dict["channel"],
+                "bank_msb": ctx_dict["bank_msb"],
+                "bank_lsb": ctx_dict["bank_lsb"],
+                "program": ctx_dict["program"],
+                "label": ctx_dict["label"],
+                "display_label": display_label,
+                "binding_count": binding_count,
+            }
+
+    # Get follow mode settings
+    follow_enabled = await get_follow_incoming_selection()
+    auto_create = await get_auto_create_context_on_follow()
+
+    return {
+        "observed_selection": dict(ACTIVE_SELECTION),
+        "active_context_id": ctx_id,
+        "active_context": ctx_info,
+        "opened_midi_inputs": sorted(list(MIDI_PORT_REGISTRY.keys())),
+        "follow_incoming_selection": follow_enabled,
+        "auto_create_context_on_follow": auto_create,
+    }
+
+
 # -----------------------------
 # Matching helpers
 # -----------------------------
@@ -1521,128 +1847,179 @@ ws_mgr = WSManager()
 
 
 async def midi_pump() -> None:
-    inputs: List[mido.ports.BaseInput] = []
-    try:
-        # Open all input ports that exist at startup
-        for name in mido.get_input_names():
-            try:
-                inputs.append(mido.open_input(name))
-            except Exception:
-                continue
-
-        while True:
+    """Main MIDI event processing loop with headless auto-follow support."""
+    while True:
+        try:
             v = await get_setting("keygrab_enabled")
             keygrab_enabled = True if v is None else (v.lower() == "true")
 
-            for inp in inputs:
-                for msg in inp.iter_pending():
-                    # Track last NOTE channel separately
-                    if msg.type in ("note_on", "note_off"):
-                        LAST_NOTE_CHANNEL[inp.name] = getattr(msg, "channel", 0)
+            follow_enabled = await get_follow_incoming_selection()
+            auto_create = await get_auto_create_context_on_follow()
 
-                    pack = update_state(inp.name, msg)
-                    ctx_match = selection_matches_event(inp.name, msg, pack["derived"])
+            # Process messages from all ports in registry
+            for port_name, inp in list(MIDI_PORT_REGISTRY.items()):
+                try:
+                    for msg in inp.iter_pending():
+                        # Track last NOTE channel separately
+                        if msg.type in ("note_on", "note_off"):
+                            LAST_NOTE_CHANNEL[port_name] = getattr(msg, "channel", 0)
 
-                    payload: Dict[str, Any] = {
-                        "ts": time.time(),
-                        "port_name": inp.name,
-                        "type": msg.type,
-                        "channel": getattr(msg, "channel", None),
-                        "effective_channel": effective_channel(inp.name, msg),
-                        "note": getattr(msg, "note", None),
-                        "velocity": getattr(msg, "velocity", None),
-                        "cc": getattr(msg, "control", None),
-                        "value": getattr(msg, "value", None),
-                        "pitch": getattr(msg, "pitch", None),
-                        "program": getattr(msg, "program", None),
-                        "derived": pack["derived"],
-                        "derived_ch": pack["derived_ch"],
-                        "derived_port": pack["derived_port"],
-                        "context_match": ctx_match,
-                        "observed_note_channel": LAST_NOTE_CHANNEL.get(inp.name),
-                        "keygrab_enabled": keygrab_enabled,
-                        "max_note": MAX_NOTE,
-                    }
+                        pack = update_state(port_name, msg)
 
-                    ctx_id = await get_active_context_id()
-                    payload["active_context_id"] = ctx_id
+                        # Auto-follow mode: update ACTIVE_SELECTION from incoming MIDI
+                        if follow_enabled:
+                            # Derive current selection from MIDI state
+                            ch = effective_channel(port_name, msg)
+                            derived = pack["derived"]
 
-                    binding = None
-                    if ctx_id is not None and keygrab_enabled and ctx_match:
-                        if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
-                            binding = await db_fetchone(
-                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=1 AND note=? AND enabled=1",
-                                (ctx_id, msg.note),
-                            )
-                        elif msg.type == "control_change":
-                            binding = await db_fetchone(
-                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=2 AND cc=? AND enabled=1",
-                                (ctx_id, msg.control),
-                            )
-                        elif msg.type == "pitchwheel":
-                            binding = await db_fetchone(
-                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=3 AND enabled=1 LIMIT 1",
-                                (ctx_id,),
-                            )
-                        elif msg.type == "program_change":
-                            binding = await db_fetchone(
-                                "SELECT * FROM bindings WHERE context_id=? AND trig_type=4 AND enabled=1 LIMIT 1",
-                                (ctx_id,),
+                            # Check if selection changed
+                            selection_changed = (
+                                ACTIVE_SELECTION.get("port_name") != port_name
+                                or ACTIVE_SELECTION.get("channel") != ch
+                                or ACTIVE_SELECTION.get("bank_msb") != derived["bank_msb"]
+                                or ACTIVE_SELECTION.get("bank_lsb") != derived["bank_lsb"]
+                                or ACTIVE_SELECTION.get("program") != derived["program"]
                             )
 
-                        # Execute binding command if found
-                        if binding:
-                            binding_dict = dict(binding)
-                            binding_id = binding_dict.get("id")
-                            command = binding_dict.get("command", "")
-                            debounce_ms = binding_dict.get("debounce_ms", 200)
-                            require_armed = binding_dict.get("require_armed", 1)
-                            notify_text = binding_dict.get("notify_text", "")
-                            notify_emoji = binding_dict.get("notify_emoji", "")
+                            if selection_changed:
+                                # Update ACTIVE_SELECTION
+                                port_row = await db_fetchone("SELECT id FROM ports WHERE name=?", (port_name,))
+                                if port_row:
+                                    ACTIVE_SELECTION["port_id"] = port_row["id"]
+                                    ACTIVE_SELECTION["port_name"] = port_name
+                                    ACTIVE_SELECTION["channel"] = ch
+                                    ACTIVE_SELECTION["bank_msb"] = derived["bank_msb"]
+                                    ACTIVE_SELECTION["bank_lsb"] = derived["bank_lsb"]
+                                    ACTIVE_SELECTION["program"] = derived["program"]
 
-                            # Check require_armed (use keygrab_enabled as armed state)
-                            armed = keygrab_enabled
-                            can_execute = True
+                                    # Find or create matching context
+                                    ctx_id = await find_or_create_context_for_selection(
+                                        port_name=port_name,
+                                        channel=ch,
+                                        bank_msb=derived["bank_msb"],
+                                        bank_lsb=derived["bank_lsb"],
+                                        program=derived["program"],
+                                        auto_create=auto_create,
+                                    )
 
-                            if require_armed and not armed:
-                                can_execute = False
+                                    if ctx_id is not None:
+                                        # Switch active context
+                                        await set_setting("active_context_id", str(ctx_id))
 
-                            # Check debounce
-                            now = time.time() * 1000  # ms
-                            last = LAST_FIRED.get(binding_id, 0)
-                            if now - last < debounce_ms:
-                                can_execute = False
+                                        # Notify about context change
+                                        await notify_context_change(
+                                            context_id=ctx_id,
+                                            port_name=port_name,
+                                            channel=ch,
+                                            bank_msb=derived["bank_msb"],
+                                            bank_lsb=derived["bank_lsb"],
+                                            program=derived["program"],
+                                        )
 
-                            if can_execute:
-                                # Update last fired time
-                                LAST_FIRED[binding_id] = now
+                        # Check if message matches current selection
+                        ctx_match = selection_matches_event(port_name, msg, pack["derived"])
 
-                                # Execute command first (if configured)
-                                exec_result = None
-                                if command:
-                                    exec_result = await safe_execute_command(command)
-                                    payload["command_execution"] = exec_result
+                        payload: Dict[str, Any] = {
+                            "ts": time.time(),
+                            "port_name": port_name,
+                            "type": msg.type,
+                            "channel": getattr(msg, "channel", None),
+                            "effective_channel": effective_channel(port_name, msg),
+                            "note": getattr(msg, "note", None),
+                            "velocity": getattr(msg, "velocity", None),
+                            "cc": getattr(msg, "control", None),
+                            "value": getattr(msg, "value", None),
+                            "pitch": getattr(msg, "pitch", None),
+                            "program": getattr(msg, "program", None),
+                            "derived": pack["derived"],
+                            "derived_ch": pack["derived_ch"],
+                            "derived_port": pack["derived_port"],
+                            "context_match": ctx_match,
+                            "observed_note_channel": LAST_NOTE_CHANNEL.get(port_name),
+                            "keygrab_enabled": keygrab_enabled,
+                            "max_note": MAX_NOTE,
+                        }
 
-                                # Send notification after command execution (if configured)
-                                if notify_text:
-                                    # Prepend error indicator if command failed
-                                    prefix = ""
-                                    if exec_result and not exec_result.get("ok"):
-                                        prefix = "❌ "
-                                    notify_result = await send_notification(prefix + notify_text, notify_emoji)
-                                    if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
-                                        payload["notify_error"] = notify_result.get("notify_error")
+                        ctx_id = await get_active_context_id()
+                        payload["active_context_id"] = ctx_id
 
-                    payload["binding_match"] = dict(binding) if binding else None
-                    await ws_mgr.broadcast(payload)
+                        binding = None
+                        if ctx_id is not None and keygrab_enabled and ctx_match:
+                            if msg.type == "note_on" and getattr(msg, "velocity", 0) > 0:
+                                binding = await db_fetchone(
+                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=1 AND note=? AND enabled=1",
+                                    (ctx_id, msg.note),
+                                )
+                            elif msg.type == "control_change":
+                                binding = await db_fetchone(
+                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=2 AND cc=? AND enabled=1",
+                                    (ctx_id, msg.control),
+                                )
+                            elif msg.type == "pitchwheel":
+                                binding = await db_fetchone(
+                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=3 AND enabled=1 LIMIT 1",
+                                    (ctx_id,),
+                                )
+                            elif msg.type == "program_change":
+                                binding = await db_fetchone(
+                                    "SELECT * FROM bindings WHERE context_id=? AND trig_type=4 AND enabled=1 LIMIT 1",
+                                    (ctx_id,),
+                                )
+
+                            # Execute binding command if found
+                            if binding:
+                                binding_dict = dict(binding)
+                                binding_id = binding_dict.get("id")
+                                command = binding_dict.get("command", "")
+                                debounce_ms = binding_dict.get("debounce_ms", 200)
+                                require_armed = binding_dict.get("require_armed", 1)
+                                notify_text = binding_dict.get("notify_text", "")
+                                notify_emoji = binding_dict.get("notify_emoji", "")
+
+                                # Check require_armed (use keygrab_enabled as armed state)
+                                armed = keygrab_enabled
+                                can_execute = True
+
+                                if require_armed and not armed:
+                                    can_execute = False
+
+                                # Check debounce
+                                now = time.time() * 1000  # ms
+                                last = LAST_FIRED.get(binding_id, 0)
+                                if now - last < debounce_ms:
+                                    can_execute = False
+
+                                if can_execute:
+                                    # Update last fired time
+                                    LAST_FIRED[binding_id] = now
+
+                                    # Execute command first (if configured)
+                                    exec_result = None
+                                    if command:
+                                        exec_result = await safe_execute_command(command)
+                                        payload["command_execution"] = exec_result
+
+                                    # Send notification after command execution (if configured)
+                                    if notify_text:
+                                        # Prepend error indicator if command failed
+                                        prefix = ""
+                                        if exec_result and not exec_result.get("ok"):
+                                            prefix = "❌ "
+                                        notify_result = await send_notification(prefix + notify_text, notify_emoji)
+                                        if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
+                                            payload["notify_error"] = notify_result.get("notify_error")
+
+                        payload["binding_match"] = dict(binding) if binding else None
+                        await ws_mgr.broadcast(payload)
+
+                except Exception as e:
+                    print(f"[midi_pump] Error processing port {port_name}: {e}", file=sys.stderr)
 
             await asyncio.sleep(WS_POLL_INTERVAL)
-    finally:
-        for inp in inputs:
-            try:
-                inp.close()
-            except Exception:
-                pass
+
+        except Exception as e:
+            print(f"[midi_pump] Fatal error: {e}", file=sys.stderr)
+            await asyncio.sleep(WS_POLL_INTERVAL)
 
 
 @app.websocket("/ws/events")
