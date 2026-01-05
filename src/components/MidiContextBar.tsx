@@ -49,6 +49,7 @@ type ContextWithBindings = {
 export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [ports, setPorts] = useState<Port[]>([]);
   const [err, setErr] = useState<string>("");
+  const [contextsLoadError, setContextsLoadError] = useState<string>("");
   const [contextsWithBindings, setContextsWithBindings] = useState<ContextWithBindings[]>([]);
 
   // Local draft (controlled-ish)
@@ -95,20 +96,23 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, []);
 
+  // Refresh contexts list (can be called manually or on events)
+  const refreshContexts = async () => {
+    try {
+      const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
+      setContextsWithBindings(contexts);
+      setContextsLoadError(""); // Clear any previous error
+    } catch (e: any) {
+      const errorMsg = e?.message || String(e);
+      setContextsLoadError(`Failed to load contexts: ${errorMsg}`);
+      console.error("Failed to load contexts:", e);
+    }
+  };
+
   // Load ALL contexts with bindings once (for cascading hints)
   useEffect(() => {
-    let alive = true;
-    apiGet<ContextWithBindings[]>("/api/contexts/with_bindings")
-      .then((contexts) => {
-        if (!alive) return;
-        setContextsWithBindings(contexts);
-      })
-      .catch(() => {
-        // Silent fail - hints are optional
-      });
-    return () => {
-      alive = false;
-    };
+    refreshContexts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Initialize header from defaults or fallback
@@ -274,8 +278,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     try {
       await apiPost(`/api/contexts/${currentContextId}/label`, { label });
       // Refresh contexts list to show new label
-      const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
-      setContextsWithBindings(contexts);
+      await refreshContexts();
       setContextLabel(label);
       setShowSaveModal(false);
       setSendStatus("Context saved!");
@@ -334,8 +337,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
 
       if (result.ok) {
         // Refresh contexts list
-        const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
-        setContextsWithBindings(contexts);
+        await refreshContexts();
 
         // Switch to the imported context
         onContextId(result.context_id);
@@ -460,6 +462,15 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
         </div>
       ) : null}
 
+      {contextsLoadError ? (
+        <div style={{ padding: 10, border: "1px solid tomato", color: "tomato", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{contextsLoadError}</span>
+          <button onClick={refreshContexts} className="btn" style={{ padding: "4px 12px", fontSize: "12px" }}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
       {/* Saved Contexts Dropdown & Save Button */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px", background: "rgba(0, 212, 255, 0.05)", borderRadius: "8px", border: "1px solid rgba(0, 212, 255, 0.2)" }}>
         {contextsWithBindings.length > 0 ? (
@@ -508,6 +519,14 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
             >
               Import/Export
             </button>
+            <button
+              onClick={refreshContexts}
+              className="btn"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              title="Refresh contexts list"
+            >
+              ⟳ Refresh
+            </button>
           </>
         ) : (
           <>
@@ -531,6 +550,14 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
               title="Import or export context bindings"
             >
               Import/Export
+            </button>
+            <button
+              onClick={refreshContexts}
+              className="btn"
+              style={{ fontSize: "12px", padding: "8px 16px", minWidth: "max-content" }}
+              title="Refresh contexts list"
+            >
+              ⟳ Refresh
             </button>
           </>
         )}

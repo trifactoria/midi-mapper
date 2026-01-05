@@ -351,8 +351,94 @@ async def _shutdown() -> None:
 # -----------------------------
 @app.get("/api/ports")
 async def list_ports() -> List[Dict[str, Any]]:
+    """List all registered ports with online status."""
     rows = await db_fetchall("SELECT id, name FROM ports ORDER BY name")
-    return [{"id": r["id"], "name": r["name"]} for r in rows]
+    online_ports = set(mido.get_input_names())
+
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "online": r["name"] in online_ports,
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/ports/refresh")
+async def refresh_ports() -> Dict[str, Any]:
+    """Refresh ports list - register any new MIDI devices."""
+    await ensure_ports_registered()
+    rows = await db_fetchall("SELECT id, name FROM ports ORDER BY name")
+    online_ports = set(mido.get_input_names())
+
+    return {
+        "ok": True,
+        "ports": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "online": r["name"] in online_ports,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.get("/api/health")
+async def health() -> Dict[str, Any]:
+    """Health check endpoint - verify API is reachable and using correct DB."""
+    return {
+        "ok": True,
+        "db_path": DB_PATH,
+        "version": "midi-mapper",
+    }
+
+
+@app.get("/api/diag/db_stats")
+async def diag_db_stats() -> Dict[str, Any]:
+    """Diagnostic endpoint - show DB state for debugging."""
+    # Get counts
+    ports_count = await db_fetchone("SELECT COUNT(*) as count FROM ports")
+    contexts_count = await db_fetchone("SELECT COUNT(*) as count FROM contexts")
+    bindings_count = await db_fetchone("SELECT COUNT(*) as count FROM bindings")
+
+    # Count contexts that have bindings
+    contexts_with_bindings_count = await db_fetchone(
+        """
+        SELECT COUNT(DISTINCT context_id) as count
+        FROM bindings
+        """
+    )
+
+    # Get sample of contexts with bindings
+    sample_contexts = await db_fetchall(
+        """
+        SELECT c.id, c.daw_slot, c.preset_slot, c.port_id, c.channel,
+               c.bank_msb, c.bank_lsb, c.program,
+               p.name as port_name,
+               COUNT(b.id) as binding_count,
+               cl.label
+        FROM contexts c
+        LEFT JOIN bindings b ON c.id = b.context_id
+        LEFT JOIN ports p ON c.port_id = p.id
+        LEFT JOIN context_labels cl ON c.id = cl.context_id
+        GROUP BY c.id
+        ORDER BY c.id
+        LIMIT 5
+        """
+    )
+
+    return {
+        "db_path": DB_PATH,
+        "counts": {
+            "ports": ports_count["count"] if ports_count else 0,
+            "contexts": contexts_count["count"] if contexts_count else 0,
+            "bindings": bindings_count["count"] if bindings_count else 0,
+            "contexts_with_bindings": contexts_with_bindings_count["count"] if contexts_with_bindings_count else 0,
+        },
+        "sample_contexts": [dict(r) for r in sample_contexts],
+    }
 
 
 @app.get("/api/capabilities")
@@ -753,16 +839,20 @@ async def contexts_with_bindings(
         SELECT DISTINCT c.id, c.daw_slot, c.preset_slot, c.port_id, c.channel,
                         c.bank_msb, c.bank_lsb, c.program,
                         COUNT(b.id) as binding_count,
-                        cl.label
+                        cl.label,
+                        p.name as port_name
         FROM contexts c
         INNER JOIN bindings b ON c.id = b.context_id
         LEFT JOIN context_labels cl ON c.id = cl.context_id
+        LEFT JOIN ports p ON c.port_id = p.id
         WHERE {where_clause}
-        GROUP BY c.id, c.daw_slot, c.preset_slot, c.port_id, c.channel, c.bank_msb, c.bank_lsb, c.program, cl.label
+        GROUP BY c.id, c.daw_slot, c.preset_slot, c.port_id, c.channel, c.bank_msb, c.bank_lsb, c.program, cl.label, p.name
         ORDER BY binding_count DESC
     """
 
     rows = await db_fetchall(query, tuple(params))
+    online_ports = set(mido.get_input_names())
+
     results = []
     for r in rows:
         d = dict(r)
@@ -771,6 +861,10 @@ async def contexts_with_bindings(
             d["display_label"] = d["label"]
         else:
             d["display_label"] = f"Unamed Context ({d['binding_count']} bindings, ch {d['channel']})"
+
+        # Add port_online status
+        d["port_online"] = d.get("port_name") in online_ports if d.get("port_name") else False
+
         results.append(d)
 
     return results
