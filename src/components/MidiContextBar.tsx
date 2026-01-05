@@ -111,45 +111,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     };
   }, []);
 
-  // Poll for context updates (e.g., when external scripts import bindings)
-  useEffect(() => {
-    // Refresh every 2.5 seconds when page is visible
-    const pollInterval = 2500;
-    let intervalId: number | null = null;
-
-    const refreshContexts = () => {
-      // Only poll if document is visible (avoid wasting resources when tab is hidden)
-      if (document.visibilityState === "visible") {
-        apiGet<ContextWithBindings[]>("/api/contexts/with_bindings")
-          .then((contexts) => {
-            setContextsWithBindings(contexts);
-          })
-          .catch(() => {
-            // Silent fail - hints are optional
-          });
-      }
-    };
-
-    // Start polling
-    intervalId = window.setInterval(refreshContexts, pollInterval);
-
-    // Also refresh when tab becomes visible again
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        refreshContexts();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
-      }
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, []);
-
   // Initialize header from defaults or fallback
   useEffect(() => {
     if (!ports.length) return;
