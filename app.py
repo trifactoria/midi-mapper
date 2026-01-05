@@ -5,9 +5,10 @@ import os
 import shlex
 import shutil
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import aiosqlite
 import mido
@@ -138,22 +139,26 @@ app.add_middleware(
 # -----------------------------
 # DB helpers
 # -----------------------------
-async def db_connect() -> aiosqlite.Connection:
+@asynccontextmanager
+async def db_connect() -> AsyncIterator[aiosqlite.Connection]:
     """Create a DB connection with foreign keys enabled and row factory set."""
     db = await aiosqlite.connect(DB_PATH)
-    await db.execute("PRAGMA foreign_keys=ON")
-    db.row_factory = aiosqlite.Row
-    return db
+    try:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        yield db
+    finally:
+        await db.close()
 
 
 async def db_exec(sql: str, params: tuple = ()) -> None:
-    async with await db_connect() as db:
+    async with db_connect() as db:
         await db.execute(sql, params)
         await db.commit()
 
 
 async def db_fetchall(sql: str, params: tuple = ()) -> List[aiosqlite.Row]:
-    async with await db_connect() as db:
+    async with db_connect() as db:
         cur = await db.execute(sql, params)
         return await cur.fetchall()
 
@@ -206,7 +211,7 @@ async def get_active_context_id() -> Optional[int]:
 
 async def gc_orphan_contexts() -> int:
     """Delete contexts with no bindings. Returns count of deleted contexts."""
-    async with await db_connect() as db:
+    async with db_connect() as db:
         # Find orphan contexts
         cursor = await db.execute(
             """
@@ -220,7 +225,7 @@ async def gc_orphan_contexts() -> int:
 
 async def apply_migrations() -> None:
     """Apply database migrations if needed."""
-    async with await db_connect() as db:
+    async with db_connect() as db:
         # Check if new columns exist
         cursor = await db.execute("PRAGMA table_info(bindings)")
         columns = await cursor.fetchall()
@@ -286,7 +291,7 @@ async def load_and_apply_defaults() -> None:
     ACTIVE_SELECTION["program"] = int(program) if program else 0
 
     # Get or create context for these defaults (use single connection)
-    async with await db_connect() as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT id FROM contexts
@@ -596,7 +601,7 @@ async def midi_send_context(ctx: SendContextIn) -> Dict[str, Any]:
 @app.post("/api/contexts/get_or_create")
 async def get_or_create_context(ctx: ContextIn) -> Dict[str, Any]:
     """Get or create a context. Uses single connection to ensure correct lastrowid."""
-    async with await db_connect() as db:
+    async with db_connect() as db:
         # Check if context exists
         cur = await db.execute(
             """
@@ -1043,7 +1048,7 @@ async def import_context(data: ImportContextIn) -> Dict[str, Any]:
         return {"ok": False, "error": "Missing port_name in payload"}
 
     # Use single transaction for entire import
-    async with await db_connect() as db:
+    async with db_connect() as db:
         # Insert or ignore port
         await db.execute("INSERT OR IGNORE INTO ports(name) VALUES (?)", (port_name,))
         cur = await db.execute("SELECT id FROM ports WHERE name=?", (port_name,))
@@ -1169,7 +1174,7 @@ async def import_context(data: ImportContextIn) -> Dict[str, Any]:
 @app.post("/api/bindings/set")
 async def set_binding(b: BindingIn) -> Dict[str, Any]:
     """Set/update a binding. Uses single connection to ensure correct lastrowid."""
-    async with await db_connect() as db:
+    async with db_connect() as db:
         # If id is provided, do direct UPDATE by id (more reliable for edits)
         if b.id is not None:
             await db.execute(
