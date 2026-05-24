@@ -23,11 +23,11 @@ export default function MidiConsole() {
   useEffect(() => {
     const ws = new WebSocket("ws://127.0.0.1:8765/ws/events");
     wsRef.current = ws;
+    let pingTimer: ReturnType<typeof setInterval> | null = null;
 
     ws.onopen = () => {
       // send keepalive pings so FastAPI handler stays alive
-      const t = setInterval(() => ws.send("ping"), 1000);
-      (ws as any).__t = t;
+      pingTimer = setInterval(() => ws.send("ping"), 1000);
     };
 
     ws.onmessage = (ev) => {
@@ -36,11 +36,11 @@ export default function MidiConsole() {
     };
 
     ws.onclose = () => {
-      const t = (ws as any).__t;
-      if (t) clearInterval(t);
+      if (pingTimer) clearInterval(pingTimer);
     };
 
     return () => {
+      if (pingTimer) clearInterval(pingTimer);
       try {
         ws.close();
       } catch {}
@@ -70,4 +70,3 @@ export default function MidiConsole() {
     </div>
   );
 }
-

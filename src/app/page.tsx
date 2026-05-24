@@ -5,7 +5,7 @@ import { MidiContextBar } from "../components/MidiContextBar";
 import { NoteGrid } from "../components/NoteGrid";
 import { BindingEditor } from "../components/BindingEditor";
 import { apiGet, API_BASE } from "../components/useMidiApi";
-import type { ContextHeader } from "../components/types";
+import type { Binding, ContextHeader } from "../components/types";
 
 // Toggle switch component
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val: boolean) => void; label: string }) {
@@ -42,7 +42,24 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (val
 }
 
 type Derived = { bank_msb: number; bank_lsb: number; program: number };
-type MidiEventRaw = any;
+type BindingMatch = {
+  trig_type?: number;
+  note?: number | null;
+  cc?: number | null;
+  command?: string;
+};
+type NestedDerived = { derived_ch?: Derived; derived_port?: Derived };
+type MidiEventRaw = Partial<Omit<MidiEvent, "derived">> & {
+  derived?: Derived | NestedDerived;
+};
+
+function isDerived(value: Derived | NestedDerived | undefined): value is Derived {
+  return typeof value === "object" && value !== null && "bank_msb" in value && typeof value.bank_msb === "number";
+}
+
+function isNestedDerived(value: Derived | NestedDerived | undefined): value is NestedDerived {
+  return typeof value === "object" && value !== null && "derived_port" in value;
+}
 
 function normalizeDerived(msg: MidiEventRaw): {
   derived: Derived;
@@ -50,7 +67,7 @@ function normalizeDerived(msg: MidiEventRaw): {
   derived_port?: Derived;
 } {
   // Preferred flat schema
-  if (msg?.derived && typeof msg.derived.bank_msb === "number") {
+  if (isDerived(msg.derived)) {
     return {
       derived: msg.derived,
       derived_ch: msg.derived_ch,
@@ -58,7 +75,7 @@ function normalizeDerived(msg: MidiEventRaw): {
     };
   }
   // Older nested schema fallback
-  if (msg?.derived?.derived_port && typeof msg.derived.derived_port.bank_msb === "number") {
+  if (isNestedDerived(msg.derived) && isDerived(msg.derived.derived_port)) {
     return {
       derived: msg.derived.derived_port,
       derived_ch: msg.derived.derived_ch,
@@ -88,14 +105,14 @@ type MidiEvent = {
   observed_note_channel?: number | null;
 
   active_context_id?: number | null;
-  binding_match?: any | null;
+  binding_match?: BindingMatch | null;
   keygrab_enabled?: boolean;
 };
 
 export default function Home() {
   const [header, setHeader] = useState<ContextHeader | null>(null);
   const [contextId, setContextId] = useState<number | null>(null);
-  const [bindings, setBindings] = useState<any[]>([]);
+  const [bindings, setBindings] = useState<Binding[]>([]);
   const [selectedNote, setSelectedNote] = useState<number | null>(null);
 
   const [keygrab, setKeygrab] = useState<boolean>(true);
@@ -105,7 +122,7 @@ export default function Home() {
   const wsRef = useRef<WebSocket | null>(null);
 
   // FOLLOW MODE: when true, header (Ch/MSB/LSB/Program) auto-tracks observed MIDI
-  const [followObserved, setFollowObserved] = useState<boolean>(true);
+  const [followObserved] = useState<boolean>(true);
   const userEditingRef = useRef<boolean>(false);
   const editTimeoutRef = useRef<number | null>(null);
 
@@ -126,7 +143,7 @@ export default function Home() {
 
   const reloadBindings = useCallback(() => {
     if (!contextId) return;
-    apiGet<any[]>(`/api/contexts/${contextId}/bindings`).then(setBindings).catch(console.error);
+    apiGet<Binding[]>(`/api/contexts/${contextId}/bindings`).then(setBindings).catch(console.error);
   }, [contextId]);
 
   // When context changes: reload bindings + set active context in backend (for WS binding_match)
@@ -156,10 +173,10 @@ export default function Home() {
   useEffect(() => {
     const ws = new WebSocket("ws://127.0.0.1:8765/ws/events");
     wsRef.current = ws;
+    let pingTimer: ReturnType<typeof setInterval> | null = null;
 
     ws.onopen = () => {
-      const t = setInterval(() => ws.send("ping"), 1000);
-      (ws as any).__t = t;
+      pingTimer = setInterval(() => ws.send("ping"), 1000);
     };
 
     ws.onmessage = (ev) => {
@@ -167,9 +184,9 @@ export default function Home() {
       const pack = normalizeDerived(raw);
 
       const msg: MidiEvent = {
-        ts: raw.ts,
-        port_name: raw.port_name,
-        type: raw.type,
+        ts: raw.ts ?? Date.now() / 1000,
+        port_name: raw.port_name ?? "",
+        type: raw.type ?? "",
         channel: raw.channel ?? null,
         note: raw.note ?? null,
         velocity: raw.velocity ?? null,
@@ -230,11 +247,11 @@ export default function Home() {
     };
 
     ws.onclose = () => {
-      const t = (ws as any).__t;
-      if (t) clearInterval(t);
+      if (pingTimer) clearInterval(pingTimer);
     };
 
     return () => {
+      if (pingTimer) clearInterval(pingTimer);
       try {
         ws.close();
       } catch {}
@@ -318,18 +335,6 @@ export default function Home() {
         }
       }
     }
-  }
-
-  function snapHeaderToObserved() {
-    if (!header) return;
-    const ch = observed.note_channel ?? observed.channel ?? header.channel ?? 0;
-    setHeader({
-      ...header,
-      channel: ch as number,
-      bank_msb: observed.derived.bank_msb,
-      bank_lsb: observed.derived.bank_lsb,
-      program: observed.derived.program,
-    });
   }
 
   return (

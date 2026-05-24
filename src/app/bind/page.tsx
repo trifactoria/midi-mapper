@@ -5,18 +5,18 @@ import { MidiContextBar } from "../../components/MidiContextBar";
 import { NoteGrid } from "../../components/NoteGrid";
 import { BindingEditor } from "../../components/BindingEditor";
 import { apiGet } from "../../components/useMidiApi";
-import type { ContextHeader } from "../../components/types";
+import type { Binding, ContextHeader } from "../../components/types";
 
 export default function BindPage() {
   const [header, setHeader] = useState<ContextHeader | null>(null);
   const [contextId, setContextId] = useState<number | null>(null);
 
-  const [bindings, setBindings] = useState<any[]>([]);
+  const [bindings, setBindings] = useState<Binding[]>([]);
   const [selectedNote, setSelectedNote] = useState<number | null>(null);
 
   const reloadBindings = useCallback(() => {
     if (!contextId) return;
-    apiGet<any[]>(`/api/contexts/${contextId}/bindings`).then(setBindings).catch(console.error);
+    apiGet<Binding[]>(`/api/contexts/${contextId}/bindings`).then(setBindings).catch(console.error);
   }, [contextId]);
 
   useEffect(() => {
@@ -54,4 +54,3 @@ export default function BindPage() {
     </div>
   );
 }
-

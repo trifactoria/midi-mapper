@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 
 export function Header() {
   const [showMenu, setShowMenu] = useState(false);
@@ -28,9 +29,11 @@ export function Header() {
               onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               title="Menu"
             >
-              <img
+              <Image
                 src="logo.png"
                 alt="MIDI Mapper"
+                width={24}
+                height={24}
                 style={{ width: 24, height: 24, display: "block" }}
               />
             </button>

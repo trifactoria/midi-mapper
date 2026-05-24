@@ -46,6 +46,17 @@ type ContextWithBindings = {
   display_label: string;
 };
 
+type ContextExport = {
+  version?: number;
+  context?: unknown;
+  bindings?: unknown[];
+  [key: string]: unknown;
+};
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [ports, setPorts] = useState<Port[]>([]);
   const [err, setErr] = useState<string>("");
@@ -56,7 +67,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   const [draft, setDraft] = useState<ContextHeader | null>(value);
 
   // Status UI
-  const [saveStatus, setSaveStatus] = useState<string>("");
   const [sendStatus, setSendStatus] = useState<string>("");
 
   // Context label editing
@@ -102,8 +112,8 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       const contexts = await apiGet<ContextWithBindings[]>("/api/contexts/with_bindings");
       setContextsWithBindings(contexts);
       setContextsLoadError(""); // Clear any previous error
-    } catch (e: any) {
-      const errorMsg = e?.message || String(e);
+    } catch (e: unknown) {
+      const errorMsg = errorMessage(e, String(e));
       setContextsLoadError(`Failed to load contexts: ${errorMsg}`);
       console.error("Failed to load contexts:", e);
     }
@@ -112,7 +122,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   // Load ALL contexts with bindings once (for cascading hints)
   useEffect(() => {
     refreshContexts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Initialize header from defaults or fallback
@@ -181,7 +190,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
   useEffect(() => {
     if (!draft) return;
 
-    setSaveStatus("Syncing…");
     setErr("");
 
     // 1) Always push active_selection (match gating)
@@ -195,7 +203,6 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
 
       // Avoid spamming if nothing actually changed
       if (lastContextKeyRef.current === key) {
-        setSaveStatus("");
         return;
       }
       lastContextKeyRef.current = key;
@@ -204,11 +211,9 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
         .then((r) => {
           onContextId(r.context_id);
           setCurrentContextId(r.context_id);
-          setSaveStatus(`Context: ${r.context_id}`);
         })
         .catch((e) => {
           setErr(String(e));
-          setSaveStatus("");
         });
     }, 150);
 
@@ -283,8 +288,8 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       setShowSaveModal(false);
       setSendStatus("Context saved!");
       setTimeout(() => setSendStatus(""), 2000);
-    } catch (e: any) {
-      setSendStatus(e?.message ?? "Save failed");
+    } catch (e: unknown) {
+      setSendStatus(errorMessage(e, "Save failed"));
     }
   };
 
@@ -300,11 +305,11 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
 
     try {
       // Fetch export JSON
-      const exportData = await apiGet<any>(`/api/contexts/${currentContextId}/export`);
+      const exportData = await apiGet<ContextExport>(`/api/contexts/${currentContextId}/export`);
       setExportJson(JSON.stringify(exportData, null, 2));
       setImportExportStatus("");
-    } catch (e: any) {
-      setImportExportStatus(e?.message ?? "Export failed");
+    } catch (e: unknown) {
+      setImportExportStatus(errorMessage(e, "Export failed"));
     }
   };
 
@@ -314,7 +319,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       await navigator.clipboard.writeText(exportJson);
       setImportExportStatus("Copied to clipboard!");
       setTimeout(() => setImportExportStatus(""), 2000);
-    } catch (e) {
+    } catch {
       setImportExportStatus("Failed to copy to clipboard");
     }
   };
@@ -329,7 +334,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
     setImportExportStatus("Importing...");
 
     try {
-      const payload = JSON.parse(importJson);
+      const payload: unknown = JSON.parse(importJson);
       const result = await apiPost<{ ok: boolean; context_id: number; binding_count: number }>("/api/contexts/import", {
         payload,
         mode: importMode,
@@ -352,8 +357,8 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       } else {
         setImportExportStatus("Import failed");
       }
-    } catch (e: any) {
-      setImportExportStatus(e?.message ?? "Invalid JSON or import failed");
+    } catch (e: unknown) {
+      setImportExportStatus(errorMessage(e, "Invalid JSON or import failed"));
     }
   };
 
@@ -433,8 +438,8 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
       await apiPost("/api/defaults/save", draft);
       setSendStatus("Saved as defaults");
       setTimeout(() => setSendStatus(""), 2000);
-    } catch (e: any) {
-      setSendStatus(e?.message ?? "Save failed");
+    } catch (e: unknown) {
+      setSendStatus(errorMessage(e, "Save failed"));
     }
   }
 
@@ -531,7 +536,7 @@ export function MidiContextBar({ value, onChange, onContextId }: Props) {
         ) : (
           <>
             <div style={{ flex: 1, fontSize: "12px", opacity: 0.7 }}>
-              No saved contexts yet. Configure your settings below and click "Save Context As..." to remember them.
+              No saved contexts yet. Configure your settings below and click &quot;Save Context As...&quot; to remember them.
             </div>
             <button
               onClick={openSaveModal}

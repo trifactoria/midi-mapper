@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "./useMidiApi";
+import type { Binding } from "./types";
 
 type Props = {
   contextId: number | null;
@@ -25,8 +26,11 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
 
   const emojiPalette = ["✅", "⚡", "🔥", "🎛️", "🎹", "🧠", "📁", "🌐", "🧰", "🖥️", "🎬", "🎵", "🧪", "🧩", "⭐"];
 
+  type BindingPayload = Omit<Binding, "id"> & { id?: number };
+
   // Clear fields when context changes (prevents emoji/data bleeding across contexts)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCommand("");
     setDebounceMs(200);
     setRequireArmed(1);
@@ -47,7 +51,7 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     async function loadBinding() {
       setStatus("Loading…");
       try {
-        const list = await apiGet<any[]>(`/api/contexts/${contextId}/bindings`);
+        const list = await apiGet<Binding[]>(`/api/contexts/${contextId}/bindings`);
         if (!alive) return;
 
         const match = list.find((b) => b.trig_type === 1 && b.note === selectedNote);
@@ -86,34 +90,6 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     };
   }, [contextId, selectedNote, canAct]);
 
-  async function getExisting() {
-    if (!canAct) return;
-    setStatus("Loading binding…");
-    const list = await apiGet<any[]>(`/api/contexts/${contextId}/bindings`);
-    const match = list.find((b) => b.trig_type === 1 && b.note === selectedNote);
-    if (!match) {
-      setCommand("");
-      setDebounceMs(200);
-      setRequireArmed(1);
-      setEnabled(1);
-      setNotes("");
-      setNotifyText("");
-      setNotifyEmoji("");
-      setBindingId(null);
-      setStatus("No binding found for that note.");
-      return;
-    }
-    setCommand(match.command ?? "");
-    setDebounceMs(match.debounce_ms ?? 200);
-    setRequireArmed(match.require_armed ?? 1);
-    setEnabled(match.enabled ?? 1);
-    setNotes(match.notes ?? "");
-    setNotifyText(match.notify_text ?? "");
-    setNotifyEmoji(match.notify_emoji ?? "");
-    setBindingId(match.id);
-    setStatus(`Loaded binding id=${match.id}`);
-  }
-
   async function setBinding() {
     if (!canAct) return;
     if (!command.trim()) {
@@ -122,7 +98,7 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     }
     setStatus("Saving…");
     try {
-      const payload: any = {
+      const payload: BindingPayload = {
         context_id: contextId!,
         enabled,
         trig_type: 1,
@@ -358,4 +334,3 @@ export function BindingEditor({ contextId, selectedNote, onBindingsChanged }: Pr
     </div>
   );
 }
-
