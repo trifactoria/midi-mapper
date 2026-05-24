@@ -65,7 +65,7 @@ export function Header() {
                     href="#"
                     onClick={(e) => {
                       e.preventDefault();
-                      alert("Help modal placeholder");
+                      alert("MIDI Mapper runs locally. Select a MIDI context, choose a note/control, then create a command binding. Keep command execution limited to trusted local workflows.");
                       setShowMenu(false);
                     }}
                     style={{

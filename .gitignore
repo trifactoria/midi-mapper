@@ -43,3 +43,7 @@ include/
 *.zip
 makezip
 midi_map.db
+*.db
+*.db-*
+*.sqlite
+*.sqlite3

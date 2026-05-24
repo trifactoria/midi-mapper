@@ -14,8 +14,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 body {
@@ -317,4 +317,3 @@ option.has-bindings::before {
 .automatr-converse .conversejs svg {
   opacity: 0.95;
 }
-
