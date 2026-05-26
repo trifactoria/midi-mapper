@@ -95,3 +95,61 @@ async def record_v2_action_test_run(
         )
         await db.commit()
         return int(cursor.lastrowid)
+
+
+async def record_v2_action_run(
+    *,
+    action_id: int,
+    binding_id: int,
+    profile_id: int,
+    layer_id: int,
+    trigger_snapshot_json: str,
+    action_summary: str,
+    started_at: float,
+    result: Dict[str, Any],
+) -> int:
+    """Record one live v2 binding action execution in runs."""
+    finished_monotonic = time.time()
+    finished_at = _now_iso()
+    duration_ms = max(0, int((finished_monotonic - started_at) * 1000))
+
+    async with db_connect() as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO runs(
+              action_id,
+              binding_id,
+              profile_id,
+              layer_id,
+              trigger_snapshot_json,
+              action_summary,
+              started_at,
+              finished_at,
+              duration_ms,
+              status,
+              exit_code,
+              stdout_preview,
+              stderr_preview,
+              error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                action_id,
+                binding_id,
+                profile_id,
+                layer_id,
+                trigger_snapshot_json,
+                action_summary,
+                datetime.fromtimestamp(started_at, timezone.utc).isoformat(),
+                finished_at,
+                duration_ms,
+                _status_from_result(result),
+                result.get("exit_code"),
+                _preview(result.get("stdout_preview") or result.get("stdout")),
+                _preview(result.get("stderr_preview") or result.get("stderr")),
+                _preview(result.get("error")),
+            ),
+        )
+        await db.commit()
+        return int(cursor.lastrowid)

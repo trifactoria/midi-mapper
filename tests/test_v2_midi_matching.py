@@ -93,9 +93,9 @@ def match_v2(app_module, port_name, msg):
     return asyncio.run(app_module.binding_matches_message_v2(port_name, msg))
 
 
-def test_default_matching_mode_is_legacy(app_module):
+def test_default_matching_mode_is_v2(app_module):
     assert asyncio.run(app_module.get_setting("matching_mode")) is None
-    assert asyncio.run(app_module.get_matching_mode()) == "legacy"
+    assert asyncio.run(app_module.get_matching_mode()) == "v2"
 
 
 def test_v2_note_binding_matches_synthetic_midi_event(app_module):

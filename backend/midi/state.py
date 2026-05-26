@@ -30,8 +30,8 @@ ACTIVE_SELECTION: Dict[str, Any] = {
     "program": 0,
 }
 
-# Debounce tracking: binding_id -> last_fired_timestamp
-LAST_FIRED: Dict[int, float] = {}
+# Debounce/cooldown tracking: binding key -> last_fired_timestamp
+LAST_FIRED: Dict[Any, float] = {}
 DEBOUNCE_LAST = LAST_FIRED
 
 

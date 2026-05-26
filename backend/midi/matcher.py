@@ -51,8 +51,8 @@ async def binding_matches_message(context_id: int, msg: Any) -> Optional[Any]:
 
 async def get_matching_mode() -> str:
     row = await db_fetchone("SELECT value FROM settings WHERE key = 'matching_mode'")
-    mode = row["value"] if row else "legacy"
-    return mode if mode in ("legacy", "v2", "dual") else "legacy"
+    mode = row["value"] if row else "v2"
+    return mode if mode in ("legacy", "v2", "dual") else "v2"
 
 
 async def _automation_armed() -> bool:
@@ -95,6 +95,10 @@ async def _device_id_for_port(port_name: Optional[str]) -> Optional[int]:
         return None
     row = await db_fetchone("SELECT id FROM devices WHERE port_name = ?", (port_name,))
     return int(row["id"]) if row else None
+
+
+async def device_id_for_port(port_name: Optional[str]) -> Optional[int]:
+    return await _device_id_for_port(port_name)
 
 
 def _message_event_type(msg: Any) -> Optional[str]:

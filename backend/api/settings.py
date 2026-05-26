@@ -1,9 +1,10 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from backend.db import db_fetchall
+from backend.midi.status import safe_get_input_names
 from backend.schemas import ContextIn
 from backend.services import get_setting, set_setting
 
@@ -17,6 +18,10 @@ class AutomationSettingsPatchIn(BaseModel):
 
 class MatchingModePatchIn(BaseModel):
     matching_mode: str
+
+
+class InputSettingsPatchIn(BaseModel):
+    selected_input_port: Optional[str] = None
 
 
 def _setting_bool(value: str | None, default: bool) -> bool:
@@ -59,7 +64,7 @@ async def automation_settings_patch(payload: AutomationSettingsPatchIn) -> Dict[
 async def matching_settings_get() -> Dict[str, Any]:
     mode = await get_setting("matching_mode")
     if mode not in ("legacy", "v2", "dual"):
-        mode = "legacy"
+        mode = "v2"
     return {"matching_mode": mode, "source": "setting" if await get_setting("matching_mode") is not None else "default"}
 
 
@@ -70,6 +75,23 @@ async def matching_settings_patch(payload: MatchingModePatchIn) -> Dict[str, Any
     await set_setting("matching_mode", payload.matching_mode)
     state = await matching_settings_get()
     return {"ok": True, **state}
+
+
+@router.get("/api/settings/input")
+async def input_settings_get() -> Dict[str, Any]:
+    selected = await get_setting("selected_input_port")
+    available = safe_get_input_names(context="input settings")
+    return {
+        "selected_input_port": selected or None,
+        "available_input_ports": available,
+        "source": "setting" if selected else "default",
+    }
+
+
+@router.patch("/api/settings/input")
+async def input_settings_patch(payload: InputSettingsPatchIn) -> Dict[str, Any]:
+    await set_setting("selected_input_port", payload.selected_input_port or "")
+    return await input_settings_get()
 
 
 @router.get("/api/keygrab")

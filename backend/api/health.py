@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from backend.config import DB_PATH, MAX_NOTE
 from backend.db import db_fetchall, db_fetchone
 from backend.midi.status import get_midi_status, safe_get_input_names, safe_get_output_names
+from backend.services import get_setting
 
 
 router = APIRouter()
@@ -13,11 +14,13 @@ router = APIRouter()
 @router.get("/api/health")
 async def health() -> Dict[str, Any]:
     """Health check endpoint - verify API is reachable and using correct DB."""
+    midi_status = get_midi_status()
+    midi_status["selected_input_port"] = await get_setting("selected_input_port")
     return {
         "ok": True,
         "db_path": DB_PATH,
         "version": "midi-mapper",
-        "midi": get_midi_status(),
+        "midi": midi_status,
     }
 
 
