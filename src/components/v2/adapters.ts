@@ -143,6 +143,7 @@ export function mapBindings(rows: BackendBinding[], layers: V2LayerSummary[]): V
       layer: layerNames.get(String(binding.layer_id)) ?? "Layer",
       enabled: asBool(binding.enabled),
       requireArmed: asBool(binding.require_armed),
+      displayColor: binding.display_color?.trim() || undefined,
       label,
       trigger: condition ? `${triggerText} · ${condition}` : triggerText,
       action: label,

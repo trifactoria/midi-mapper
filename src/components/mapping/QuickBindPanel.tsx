@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
-import type { V2BindingSummary } from "../v2/types";
+import type { V2BindingSummary, V2MidiEventPayload } from "../v2/types";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -49,6 +49,65 @@ function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick?: 
   );
 }
 
+export type TileCapture =
+  | { type: "note"; value: number; key: number }
+  | { type: "cc"; value: number; key: number };
+
+type ActionPreset = {
+  id: string;
+  label: string;
+  command: string;
+  args: string;
+  hint?: string;
+};
+
+const PRESET_GROUPS: { group: string; items: ActionPreset[] }[] = [
+  {
+    group: "",
+    items: [
+      { id: "custom", label: "Custom Command", command: "echo", args: "hello" },
+      { id: "echo_test", label: "Shell Echo / Test", command: "echo", args: "hello" },
+    ],
+  },
+  {
+    group: "Open",
+    items: [
+      { id: "open_url", label: "Open URL", command: "xdg-open", args: "https://example.com", hint: "Requires xdg-open" },
+      { id: "open_app", label: "Open App", command: "firefox", args: "", hint: "Edit command to your app binary name" },
+    ],
+  },
+  {
+    group: "Media",
+    items: [
+      { id: "media_play_pause", label: "Media Play/Pause", command: "playerctl", args: "play-pause", hint: "Requires playerctl" },
+      { id: "media_next", label: "Media Next", command: "playerctl", args: "next", hint: "Requires playerctl" },
+      { id: "media_prev", label: "Media Previous", command: "playerctl", args: "previous", hint: "Requires playerctl" },
+    ],
+  },
+  {
+    group: "OBS",
+    items: [
+      { id: "obs_scene", label: "OBS Scene Switch", command: "obs-cmd", args: 'scene switch "Scene 1"', hint: "Requires obs-cmd  (pip install obs-cmd)" },
+      { id: "obs_record_start", label: "OBS Start Recording", command: "obs-cmd", args: "recording start", hint: "Requires obs-cmd  (pip install obs-cmd)" },
+      { id: "obs_record_stop", label: "OBS Stop Recording", command: "obs-cmd", args: "recording stop", hint: "Requires obs-cmd  (pip install obs-cmd)" },
+    ],
+  },
+];
+
+const ALL_PRESETS = PRESET_GROUPS.flatMap((g) => g.items);
+
+const BINDING_COLORS = [
+  { id: "cyan",    hex: "#22d3ee", label: "Cyan" },
+  { id: "emerald", hex: "#34d399", label: "Emerald" },
+  { id: "violet",  hex: "#a78bfa", label: "Violet" },
+  { id: "amber",   hex: "#fbbf24", label: "Amber" },
+  { id: "rose",    hex: "#fb7185", label: "Rose" },
+  { id: "blue",    hex: "#60a5fa", label: "Blue" },
+  { id: "slate",   hex: "#94a3b8", label: "Slate" },
+] as const;
+
+type BindingColorId = (typeof BINDING_COLORS)[number]["id"];
+
 type Props = {
   selectedBinding?: V2BindingSummary | null;
   canMutateBindings: boolean;
@@ -56,7 +115,16 @@ type Props = {
   onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
   onBindingCreated?: (binding: V2BindingSummary) => void;
+  lastMidiEvent?: V2MidiEventPayload | null;
+  tileCapture?: TileCapture | null;
 };
+
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function noteName(note: number): string {
+  const name = NOTE_NAMES[note % 12] ?? "Note";
+  const octave = Math.floor(note / 12) - 2;
+  return `${name}${octave}`;
+}
 
 function numberFromText(value: string): number | undefined {
   const match = value.match(/\d+/);
@@ -69,6 +137,40 @@ function boundedMidiValue(value: string): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return undefined;
   return Math.max(0, Math.min(127, Math.round(parsed)));
+}
+
+function validateCreatePayload(
+  eventType: "note" | "cc",
+  channel: string,
+  note: string,
+  controller: string,
+  velocityMin: string,
+  velocityMax: string,
+  valueMin: string,
+  valueMax: string,
+  commandLine: string,
+): string | null {
+  if (!commandLine.trim()) return "Command is required";
+  const ch = Number(channel);
+  if (!Number.isFinite(ch) || ch < 1 || ch > 16) return "Channel must be 1–16";
+  if (eventType === "note") {
+    const n = Number(note);
+    if (!Number.isFinite(n) || n < 0 || n > 127) return "Note must be 0–127";
+    const vMin = Number(velocityMin);
+    const vMax = Number(velocityMax);
+    if (!Number.isFinite(vMin) || vMin < 0 || vMin > 127) return "Velocity min must be 0–127";
+    if (!Number.isFinite(vMax) || vMax < 0 || vMax > 127) return "Velocity max must be 0–127";
+    if (vMin > vMax) return "Velocity min cannot exceed max";
+  } else {
+    const ctrl = Number(controller);
+    if (!Number.isFinite(ctrl) || ctrl < 0 || ctrl > 127) return "Controller must be 0–127";
+    const vMin = Number(valueMin);
+    const vMax = Number(valueMax);
+    if (!Number.isFinite(vMin) || vMin < 0 || vMin > 127) return "Value min must be 0–127";
+    if (!Number.isFinite(vMax) || vMax < 0 || vMax > 127) return "Value max must be 0–127";
+    if (vMin > vMax) return "Value min cannot exceed max";
+  }
+  return null;
 }
 
 function resultText(result: BackendActionRunResult | null): string | null {
@@ -88,6 +190,8 @@ export function QuickBindPanel({
   onDryRunAction,
   onTestAction,
   onBindingCreated,
+  lastMidiEvent,
+  tileCapture,
 }: Props) {
   const [eventType, setEventType] = useState<"note" | "cc">("note");
   const [channel, setChannel] = useState("1");
@@ -105,9 +209,17 @@ export function QuickBindPanel({
   const [cooldownMs, setCooldownMs] = useState("250");
   const [debounceMs, setDebounceMs] = useState("20");
   const [notes, setNotes] = useState("");
+  const [presetId, setPresetId] = useState("custom");
+  const [displayColor, setDisplayColor] = useState<BindingColorId>("cyan");
+  const [colorOpen, setColorOpen] = useState(false);
+  const colorPickerRef = useRef<HTMLDivElement>(null);
   const [lastActionId, setLastActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<BackendActionRunResult | null>(null);
+  const [captureMode, setCaptureMode] = useState<"idle" | "waiting">("idle");
+  const [captureHint, setCaptureHint] = useState<string | null>(null);
+  // stores the lastMidiEvent reference at arm time so we skip pre-existing events
+  const captureArmedEventRef = useRef<V2MidiEventPayload | null | undefined>(undefined);
 
   useEffect(() => {
     if (!selectedBinding) return;
@@ -126,38 +238,130 @@ export function QuickBindPanel({
     setArgs("");
     setEnabled(selectedBinding.enabled);
     setRequireArmed(selectedBinding.requireArmed);
+    setPresetId("custom");
     setLastActionId(selectedBinding.actionId ?? null);
-    setMessage(null);
     setRunResult(null);
   }, [selectedBinding]);
 
+  // Populate fields from the next incoming MIDI event when capture is armed
+  useEffect(() => {
+    if (captureMode !== "waiting" || !lastMidiEvent) return;
+    if (lastMidiEvent === captureArmedEventRef.current) return;
+
+    const rawChannel = lastMidiEvent.effective_channel ?? lastMidiEvent.channel ?? 0;
+    const ch = String((typeof rawChannel === "number" ? rawChannel : 0) + 1);
+
+    if (lastMidiEvent.type === "note_on" && typeof lastMidiEvent.note === "number") {
+      setEventType("note");
+      setChannel(ch);
+      setNote(String(lastMidiEvent.note));
+      setVelocityMin("1");
+      setVelocityMax("127");
+      setCaptureHint(`Captured ${noteName(lastMidiEvent.note)} (note ${lastMidiEvent.note})`);
+      setCaptureMode("idle");
+    } else if (lastMidiEvent.type === "control_change" && typeof lastMidiEvent.cc === "number") {
+      setEventType("cc");
+      setChannel(ch);
+      setController(String(lastMidiEvent.cc));
+      setValueMin("0");
+      setValueMax("127");
+      setCaptureHint(`Captured CC ${lastMidiEvent.cc}`);
+      setCaptureMode("idle");
+    }
+  }, [lastMidiEvent, captureMode]);
+
+  // Escape key cancels capture
+  useEffect(() => {
+    if (captureMode !== "waiting") return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setCaptureMode("idle");
+        setCaptureHint(null);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [captureMode]);
+
+  // Note tile / CC bar click → populate fields
+  useEffect(() => {
+    if (!tileCapture) return;
+    setCaptureMode("idle");
+    setCaptureHint(null);
+    if (tileCapture.type === "note") {
+      setEventType("note");
+      setNote(String(tileCapture.value));
+    } else {
+      setEventType("cc");
+      setController(String(tileCapture.value));
+    }
+  }, [tileCapture]);
+
+  // Close color picker on outside click
+  useEffect(() => {
+    if (!colorOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!colorPickerRef.current?.contains(e.target as Node)) setColorOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [colorOpen]);
+
+  function toggleCapture() {
+    if (captureMode === "waiting") {
+      setCaptureMode("idle");
+      setCaptureHint(null);
+    } else {
+      captureArmedEventRef.current = lastMidiEvent;
+      setCaptureMode("waiting");
+      setCaptureHint(null);
+    }
+  }
+
+  function applyPreset(id: string) {
+    setPresetId(id);
+    if (id === "custom") return; // keep current command/args when reverting to custom
+    const preset = ALL_PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    setCommand(preset.command);
+    setArgs(preset.args);
+  }
+
+  const activePreset = ALL_PRESETS.find((p) => p.id === presetId);
   const actionId = selectedBinding?.actionId ?? lastActionId;
   const commandLine = useMemo(() => [command.trim(), args.trim()].filter(Boolean).join(" "), [args, command]);
+  const effectiveLabel = presetId !== "custom" && activePreset
+    ? activePreset.label
+    : (command.trim() || commandLine);
 
   async function createBinding() {
-    setMessage(null);
     setRunResult(null);
     if (!canMutateBindings) {
-      setMessage("Mock fallback: start backend and seed demo data to create real bindings");
+      setMessage("No active layer — create or select a layer first");
       return;
     }
-    if (!commandLine) {
-      setMessage("Command is required");
+    const validationError = validateCreatePayload(
+      eventType, channel, note, controller, velocityMin, velocityMax, valueMin, valueMax, commandLine,
+    );
+    if (validationError) {
+      setMessage(validationError);
       return;
     }
 
+    // channel is stored 1-based in state for display; backend/matcher use 0-based MIDI channel
+    const midiChannel = Number(channel) - 1;
     const trigger =
       eventType === "cc"
         ? {
             event_type: "control_change" as const,
-            channel: Number(channel),
+            channel: midiChannel,
             controller: boundedMidiValue(controller),
             value_min: boundedMidiValue(valueMin),
             value_max: boundedMidiValue(valueMax),
           }
         : {
             event_type: "note_on" as const,
-            channel: Number(channel),
+            channel: midiChannel,
             note: boundedMidiValue(note),
             velocity_min: boundedMidiValue(velocityMin),
             velocity_max: boundedMidiValue(velocityMax),
@@ -168,15 +372,17 @@ export function QuickBindPanel({
         trigger,
         action: {
           type: "command",
-          label: command.trim() || commandLine,
+          label: effectiveLabel,
           command: commandLine,
+          working_directory: workingDirectory.trim() || undefined,
           execution_mode: "argv",
         },
         enabled: enabled ? 1 : 0,
         require_armed: requireArmed ? 1 : 0,
         cooldown_ms: Number(cooldownMs) || 200,
         notes,
-        display_label: command.trim() || commandLine,
+        display_label: effectiveLabel,
+        display_color: displayColor,
       });
       setLastActionId(created.actionId ?? null);
       setMessage("Binding created");
@@ -188,8 +394,9 @@ export function QuickBindPanel({
 
   async function dryRunAction() {
     setMessage(null);
+    setRunResult(null);
     if (!actionId) {
-      setMessage("Mock fallback: select or create a real backend binding first");
+      setMessage("No action yet — create a binding first");
       return;
     }
     try {
@@ -202,8 +409,9 @@ export function QuickBindPanel({
 
   async function testAction() {
     setMessage(null);
+    setRunResult(null);
     if (!actionId) {
-      setMessage("Mock fallback: select or create a real backend binding first");
+      setMessage("No action yet — create a binding first");
       return;
     }
     try {
@@ -220,10 +428,47 @@ export function QuickBindPanel({
       <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
         <div className="mb-1.5 flex items-center justify-between">
           <SectionLabel>Quick Bind</SectionLabel>
-          <span className="rounded border border-cyan-300/25 bg-cyan-300/[0.06] !px-1.5 !py-px text-[9.5px] uppercase tracking-[0.14em] text-cyan-100">
-            Capture
-          </span>
+          {/* Color selector — only shown when a layer is active */}
+          <div ref={colorPickerRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setColorOpen((o) => !o)}
+              className="flex items-center gap-1 rounded border border-white/10 bg-white/[0.04] !px-1.5 !py-[3px] text-white/60 hover:bg-white/[0.07]"
+              aria-label="Binding color"
+            >
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: BINDING_COLORS.find((c) => c.id === displayColor)?.hex ?? "#22d3ee" }}
+              />
+              <svg viewBox="0 0 10 6" className="h-1.5 w-1.5" fill="currentColor">
+                <path d="M0 0l5 6 5-6H0z" />
+              </svg>
+            </button>
+            {colorOpen && (
+              <div className="absolute right-0 top-full z-20 mt-1 flex gap-1 rounded-md border border-white/12 bg-zinc-900 p-1.5 shadow-xl">
+                {BINDING_COLORS.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    title={c.label}
+                    onClick={() => { setDisplayColor(c.id); setColorOpen(false); }}
+                    className={[
+                      "h-5 w-5 rounded-full transition",
+                      displayColor === c.id ? "ring-2 ring-white/60 ring-offset-1 ring-offset-zinc-900" : "opacity-70 hover:opacity-100",
+                    ].join(" ")}
+                    style={{ backgroundColor: c.hex }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
+
+        {!canMutateBindings && (
+          <p className="mb-2 rounded border border-white/8 bg-white/[0.025] px-2 py-1.5 text-[11px] text-white/45">
+            No active layer — create or select a layer to start mapping
+          </p>
+        )}
 
         <div className="grid grid-cols-3 gap-1.5">
           <label className="block">
@@ -260,11 +505,23 @@ export function QuickBindPanel({
           </div>
           <button
             type="button"
-            className="!h-7 shrink-0 rounded-md border border-cyan-300/30 bg-cyan-300/[0.10] !px-2.5 !text-[10.5px] uppercase tracking-[0.10em] font-semibold text-cyan-100 hover:bg-cyan-300/[0.16]"
+            onClick={toggleCapture}
+            className={[
+              "!h-7 shrink-0 rounded-md border !px-2.5 !text-[10.5px] uppercase tracking-[0.10em] font-semibold transition",
+              captureMode === "waiting"
+                ? "border-amber-300/40 bg-amber-300/[0.14] text-amber-200 hover:bg-amber-300/[0.20] animate-pulse"
+                : "border-cyan-300/30 bg-cyan-300/[0.10] text-cyan-100 hover:bg-cyan-300/[0.16]",
+            ].join(" ")}
           >
-            Capture Next
+            {captureMode === "waiting" ? "Cancel" : "Capture Next"}
           </button>
         </div>
+        {captureMode === "waiting" && (
+          <p className="mt-1.5 text-[10.5px] text-amber-200/70">Waiting for MIDI input… (Esc to cancel)</p>
+        )}
+        {captureMode === "idle" && captureHint && (
+          <p className="mt-1.5 text-[10.5px] text-emerald-300/80">{captureHint}</p>
+        )}
       </section>
 
       {/* Action Preview */}
@@ -275,21 +532,48 @@ export function QuickBindPanel({
 
         <div className="grid grid-cols-[1fr_2fr] gap-1.5">
           <label className="block">
-            <FieldLabel>Type</FieldLabel>
-            <select className="w-full !text-[11.5px]" value="command" onChange={() => undefined}>
-              <option value="command">Command</option>
+            <FieldLabel>Preset</FieldLabel>
+            <select
+              className="w-full !text-[11.5px]"
+              value={presetId}
+              onChange={(event) => applyPreset(event.target.value)}
+            >
+              {PRESET_GROUPS.map(({ group, items }) =>
+                group ? (
+                  <optgroup key={group} label={group}>
+                    {items.map((item) => (
+                      <option key={item.id} value={item.id}>{item.label}</option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  items.map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))
+                )
+              )}
             </select>
           </label>
           <label className="block">
             <FieldLabel>Command</FieldLabel>
-            <input className="w-full font-mono !text-[11.5px]" value={command} onChange={(event) => setCommand(event.target.value)} />
+            <input
+              className="w-full font-mono !text-[11.5px]"
+              value={command}
+              onChange={(event) => { setCommand(event.target.value); setPresetId("custom"); }}
+            />
           </label>
         </div>
 
         <label className="mt-1.5 block">
           <FieldLabel optional>Arguments</FieldLabel>
-          <input className="w-full font-mono !text-[11.5px]" value={args} onChange={(event) => setArgs(event.target.value)} />
+          <input
+            className="w-full font-mono !text-[11.5px]"
+            value={args}
+            onChange={(event) => { setArgs(event.target.value); setPresetId("custom"); }}
+          />
         </label>
+        {activePreset?.hint && (
+          <p className="mt-0.5 text-[10px] text-amber-200/50">{activePreset.hint}</p>
+        )}
 
         <label className="mt-1.5 block">
           <FieldLabel optional>Working Directory</FieldLabel>

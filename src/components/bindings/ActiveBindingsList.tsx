@@ -1,5 +1,18 @@
 import type { V2BindingSummary } from "../v2/types";
 
+const BINDING_COLOR_HEX: Record<string, string> = {
+  cyan:    "#22d3ee",
+  emerald: "#34d399",
+  violet:  "#a78bfa",
+  amber:   "#fbbf24",
+  rose:    "#fb7185",
+  blue:    "#60a5fa",
+  slate:   "#94a3b8",
+  purple:  "#c084fc",
+  orange:  "#fb923c",
+  red:     "#f87171",
+};
+
 type Props = {
   bindings: V2BindingSummary[];
   compact?: boolean;
@@ -50,6 +63,12 @@ export function ActiveBindingsList({
   onSelectBinding,
   onDeleteBinding,
 }: Props) {
+  if (bindings.length === 0) {
+    return (
+      <p className="py-2 text-center text-[11px] text-white/30">No bindings yet</p>
+    );
+  }
+
   return (
     <div className="space-y-1">
       {bindings.map((binding) => (
@@ -84,6 +103,13 @@ export function ActiveBindingsList({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              {binding.displayColor && BINDING_COLOR_HEX[binding.displayColor] && (
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: BINDING_COLOR_HEX[binding.displayColor] }}
+                  title={binding.displayColor}
+                />
+              )}
               <KindBadge kind={binding.kind} />
               <button
                 type="button"

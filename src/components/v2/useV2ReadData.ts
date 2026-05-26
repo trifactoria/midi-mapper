@@ -18,6 +18,7 @@ import type {
   CcBar,
   KeyboardNote,
   MidiMonitorEvent,
+  NoteDotColor,
   V2BindingSummary,
   V2LayerSummary,
   V2MidiEventPayload,
@@ -46,15 +47,21 @@ type V2ReadData = {
   keyboardNotes: KeyboardNote[];
   ccBars: CcBar[];
   liveMatchedBindingId: string | null;
+  lastMidiEvent: V2MidiEventPayload | null;
   loading: boolean;
   error: string | null;
-  dataSourceLabel: "Real backend data" | "Mock fallback" | "Backend unavailable";
+  dataSourceLabel: "Real backend data" | "Backend unavailable";
   midiStatus: BackendMidiStatus | null;
   inputPorts: BackendPort[];
   selectedInputPort: string | null;
   setAutomationArmed: (armed: boolean) => Promise<void>;
   setSelectedInputPort: (portName: string | null) => Promise<void>;
+  clearRuns: () => Promise<void>;
+  createProfile: () => Promise<string | null>;
+  renameProfile: (profileId: string, name: string) => Promise<void>;
   activateProfile: (profileId: string) => Promise<void>;
+  createLayer: () => Promise<string | null>;
+  renameLayer: (layerId: string, name: string) => Promise<void>;
   activateLayer: (layerId: string) => Promise<void>;
   canMutateBindings: boolean;
   createBinding: (payload: BackendBindingCreatePayload) => Promise<V2BindingSummary>;
@@ -165,6 +172,11 @@ function updateCcBars(current: CcBar[], cc: number, value: number, matched: bool
   return next;
 }
 
+const VALID_DOT_COLORS = new Set<string>(["cyan","purple","amber","orange","red","emerald","violet","rose","blue","slate"]);
+function asDotColor(color: string | undefined): NoteDotColor {
+  return (color && VALID_DOT_COLORS.has(color) ? color : "cyan") as NoteDotColor;
+}
+
 export function useV2ReadData(): V2ReadData {
   const [profiles, setProfiles] = useState(mockProfiles);
   const [layers, setLayers] = useState(mockLayers);
@@ -177,13 +189,14 @@ export function useV2ReadData(): V2ReadData {
   const [midiStatus, setMidiStatus] = useState<BackendMidiStatus | null>(null);
   const [profileSource, setProfileSource] = useState<DataSource>("mock");
   const [layerSource, setLayerSource] = useState<DataSource>("mock");
-  const [dataSourceLabel, setDataSourceLabel] = useState<V2ReadData["dataSourceLabel"]>("Mock fallback");
+  const [dataSourceLabel, setDataSourceLabel] = useState<V2ReadData["dataSourceLabel"]>("Backend unavailable");
   const [monitorEvents, setMonitorEvents] = useState<MidiMonitorEvent[]>(mockMonitorEvents);
   const [liveNotes, setLiveNotes] = useState<LiveNoteState>({});
   const [ccBars, setCcBars] = useState<CcBar[]>(mockCcBars);
   const [liveSourcePort, setLiveSourcePort] = useState<string | null>(null);
   const [liveLastEvent, setLiveLastEvent] = useState<string | null>(null);
   const [liveMatchedBindingId, setLiveMatchedBindingId] = useState<string | null>(null);
+  const [lastMidiEvent, setLastMidiEvent] = useState<V2MidiEventPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -192,32 +205,42 @@ export function useV2ReadData(): V2ReadData {
     setError(null);
 
     const [profileResult, runResult, automationResult, deviceResult, portResult, inputResult, healthResult] = await Promise.all([
-      readOrFallback(v2Api.profiles, (rows) => rows.length === 0),
-      readOrFallback(v2Api.runs, (rows) => rows.length === 0),
+      readOrFallback(v2Api.profiles, () => false),
+      readOrFallback(v2Api.runs, () => false),
       readOrFallback(v2Api.automation, () => false),
-      readOrFallback(v2Api.devices, (rows) => rows.length === 0),
-      readOrFallback(v2Api.ports, (rows) => rows.length === 0),
+      readOrFallback(v2Api.devices, () => false),
+      readOrFallback(v2Api.ports, () => false),
       readOrFallback(v2Api.inputSettings, () => false),
       readOrFallback(v2Api.health, () => false),
     ]);
 
-    const nextProfileSource: DataSource = profileResult.value ? "backend" : "mock";
-    const nextProfiles = profileResult.value ? ensureOneActive(mapProfiles(profileResult.value)) : mockProfiles;
+    // Backend is reachable if the profiles endpoint responded (even with an empty array).
+    // Only fall back to mock data when the network request itself failed.
+    const backendReachable = profileResult.value !== null;
+
+    const nextProfileSource: DataSource = backendReachable ? "backend" : "mock";
+    const nextProfiles = profileResult.value !== null
+      ? ensureOneActive(mapProfiles(profileResult.value))
+      : mockProfiles;
     const activeProfile = nextProfiles.find((profile) => profile.active) ?? nextProfiles[0];
     const activeProfileBackendId =
       nextProfileSource === "backend" && activeProfile ? numericBackendId(activeProfile.id) : null;
     const layerResult = activeProfileBackendId
-      ? await readOrFallback(() => v2Api.layers(activeProfileBackendId), (rows) => rows.length === 0)
+      ? await readOrFallback(() => v2Api.layers(activeProfileBackendId), () => false)
       : { value: null, fallback: true };
-    const nextLayerSource: DataSource = layerResult.value ? "backend" : "mock";
-    const nextLayers = layerResult.value ? ensureOneActive(mapLayers(layerResult.value)) : mockLayers;
+    const nextLayerSource: DataSource = backendReachable ? "backend" : "mock";
+    const nextLayers = backendReachable
+      ? ensureOneActive(mapLayers(layerResult.value ?? []))
+      : mockLayers;
     const activeLayer = nextLayers.find((layer) => layer.active) ?? nextLayers[0];
     const activeLayerBackendId =
       nextLayerSource === "backend" && activeLayer ? numericBackendId(activeLayer.id) : null;
     const bindingResult = activeLayerBackendId
-      ? await readOrFallback(() => v2Api.bindings(activeLayerBackendId), (rows) => rows.length === 0)
+      ? await readOrFallback(() => v2Api.bindings(activeLayerBackendId), () => false)
       : { value: null, fallback: true };
-    const nextBindings = bindingResult.value ? mapBindings(bindingResult.value, nextLayers) : mockBindings;
+    const nextBindings = backendReachable
+      ? mapBindings(bindingResult.value ?? [], nextLayers)
+      : mockBindings;
 
     if (options?.signal?.aborted) return;
 
@@ -226,7 +249,7 @@ export function useV2ReadData(): V2ReadData {
     setBindings(nextBindings);
     setProfileSource(nextProfileSource);
     setLayerSource(nextLayerSource);
-    setRuns(runResult.value ? mapRuns(runResult.value) : mockRuns);
+    setRuns(backendReachable ? mapRuns(runResult.value ?? []) : mockRuns);
     setAutomation(mapAutomation(automationResult.value, null, mockAutomationState));
     setDevices(deviceResult.value ?? []);
     setInputPorts(
@@ -240,19 +263,8 @@ export function useV2ReadData(): V2ReadData {
     );
     setSelectedInputPortState(inputResult.value?.selected_input_port || null);
     setMidiStatus(healthResult.value?.midi ?? null);
-    const fallbackCount = [
-      profileResult,
-      layerResult,
-      bindingResult,
-      runResult,
-      automationResult,
-      deviceResult,
-      portResult,
-      inputResult,
-      healthResult,
-    ].filter((result) => result.fallback).length;
-    setDataSourceLabel(nextProfileSource === "backend" ? "Real backend data" : fallbackCount === 9 ? "Backend unavailable" : "Mock fallback");
-    setError(fallbackCount === 0 ? null : fallbackCount === 9 ? "Using demo data" : "Live data with fallbacks");
+    setDataSourceLabel(backendReachable ? "Real backend data" : "Backend unavailable");
+    setError(backendReachable ? null : "Using demo data");
     setLoading(false);
   }, []);
 
@@ -350,6 +362,13 @@ export function useV2ReadData(): V2ReadData {
           setCcBars((current) => updateCcBars(current, event.cc as number, event.value ?? 0, matched));
         }
 
+        if (
+          (event.type === "note_on" && typeof event.velocity === "number" && event.velocity > 0) ||
+          event.type === "control_change"
+        ) {
+          setLastMidiEvent({ ...event });
+        }
+
         if (event.action_execution || event.execution_status) {
           void load({ quiet: true });
         }
@@ -403,6 +422,37 @@ export function useV2ReadData(): V2ReadData {
     }
   }, [selectedInputPort]);
 
+  const clearRuns = useCallback(async () => {
+    setRuns([]);
+    try { await v2Api.clearRuns(); }
+    catch { await load({ quiet: true }); }
+  }, [load]);
+
+  const createProfile = useCallback(async () => {
+    if (profileSource !== "backend") return null;
+    try {
+      const created = await v2Api.createProfile("New Profile");
+      const createdId = String(created.id);
+      await v2Api.activateProfile(createdId);
+      await load({ quiet: true });
+      return createdId;
+    } catch {
+      return null;
+    }
+  }, [load, profileSource]);
+
+  const renameProfile = useCallback(async (profileId: string, name: string) => {
+    const backendId = profileSource === "backend" ? numericBackendId(profileId) : null;
+    if (!backendId) return;
+    setProfiles((current) => current.map((p) => p.id === profileId ? { ...p, name } : p));
+    try {
+      await v2Api.updateProfile(backendId, name);
+    } catch {
+      // revert on error
+      await load({ quiet: true });
+    }
+  }, [load, profileSource]);
+
   const activateProfile = useCallback(async (profileId: string) => {
     const previousProfiles = profiles;
     setProfiles((current) => current.map((profile) => ({ ...profile, active: profile.id === profileId })));
@@ -419,6 +469,34 @@ export function useV2ReadData(): V2ReadData {
       setError("Profile activation failed");
     }
   }, [load, profileSource, profiles]);
+
+  const createLayer = useCallback(async () => {
+    if (profileSource !== "backend") return null;
+    const activeProfile = profiles.find((p) => p.active) ?? profiles[0];
+    if (!activeProfile) return null;
+    const backendProfileId = numericBackendId(activeProfile.id);
+    if (!backendProfileId) return null;
+    try {
+      const created = await v2Api.createLayer(backendProfileId, "New Layer");
+      const createdId = String(created.id);
+      await v2Api.activateLayer(createdId);
+      await load({ quiet: true });
+      return createdId;
+    } catch {
+      return null;
+    }
+  }, [load, profileSource, profiles]);
+
+  const renameLayer = useCallback(async (layerId: string, name: string) => {
+    const backendId = layerSource === "backend" ? numericBackendId(layerId) : null;
+    if (!backendId) return;
+    setLayers((current) => current.map((l) => l.id === layerId ? { ...l, name } : l));
+    try {
+      await v2Api.updateLayer(backendId, name);
+    } catch {
+      await load({ quiet: true });
+    }
+  }, [layerSource, load]);
 
   const activateLayer = useCallback(async (layerId: string) => {
     const previousLayers = layers;
@@ -480,11 +558,20 @@ export function useV2ReadData(): V2ReadData {
   }, [load]);
 
   const keyboardNotes = useMemo(() => {
-    const boundNotes = new Set(bindings.filter((binding) => binding.kind === "note" && typeof binding.note === "number").map((binding) => binding.note as number));
+    const noteColors = new Map<number, NoteDotColor>();
+    for (const b of bindings) {
+      if (b.kind === "note" && typeof b.note === "number") {
+        noteColors.set(b.note, asDotColor(b.displayColor));
+      }
+    }
+    const boundNotes = new Set(noteColors.keys());
     return mockKeyboardNotes.map((note) => {
       const live = liveNotes[note.note];
-      const bound = note.bound || boundNotes.has(note.note);
-      const dots: KeyboardNote["dots"] = bound && !note.dots?.length ? ["cyan"] : note.dots;
+      const bound = (profileSource === "mock" && note.bound) || boundNotes.has(note.note);
+      const bindingDotColor = noteColors.get(note.note) ?? "cyan";
+      // When backend data is active, ignore mock pre-set dots — derive everything from real bindings.
+      const baseDots = profileSource === "mock" ? note.dots : undefined;
+      const dots: KeyboardNote["dots"] = bound && !baseDots?.length ? [bindingDotColor] : baseDots;
       const nextDots: KeyboardNote["dots"] =
         live?.matched && dots && !dots.includes("emerald") ? [...dots, "emerald"] : live?.matched && !dots ? ["emerald"] : dots;
       return {
@@ -522,6 +609,7 @@ export function useV2ReadData(): V2ReadData {
     keyboardNotes,
     ccBars,
     liveMatchedBindingId,
+    lastMidiEvent,
     loading,
     error,
     dataSourceLabel,
@@ -530,7 +618,12 @@ export function useV2ReadData(): V2ReadData {
     selectedInputPort,
     setAutomationArmed,
     setSelectedInputPort,
+    clearRuns,
+    createProfile,
+    renameProfile,
     activateProfile,
+    createLayer,
+    renameLayer,
     activateLayer,
     canMutateBindings,
     createBinding,

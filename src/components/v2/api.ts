@@ -44,6 +44,7 @@ export type BackendBinding = {
   enabled?: boolean | number | null;
   require_armed?: boolean | number | null;
   display_label?: string | null;
+  display_color?: string | null;
   trigger?: BackendTrigger | null;
   action?: BackendAction | null;
 };
@@ -63,6 +64,7 @@ export type BackendBindingCreatePayload = {
     type: "command";
     label: string;
     command: string;
+    working_directory?: string;
     execution_mode?: "argv";
   };
   enabled: 0 | 1;
@@ -70,6 +72,7 @@ export type BackendBindingCreatePayload = {
   cooldown_ms: number;
   notes: string;
   display_label: string;
+  display_color?: string;
 };
 
 export type BackendActionRunResult = {
@@ -205,6 +208,12 @@ export const v2Api = {
   updateInputSettings: (selectedInputPort: string | null) =>
     apiPatch<BackendInputSettings>("/api/settings/input", { selected_input_port: selectedInputPort }),
   health: () => apiGet<BackendHealth>("/api/health"),
+  clearRuns: () => apiDelete<{ ok: boolean; deleted: number }>("/api/runs"),
+  createProfile: (name: string) => apiPost<BackendProfile>("/api/profiles", { name }),
+  updateProfile: (profileId: string, name: string) => apiPatch<BackendProfile>(`/api/profiles/${profileId}`, { name }),
+  createLayer: (profileId: string, name: string) =>
+    apiPost<BackendLayer>(`/api/profiles/${profileId}/layers`, { name }),
+  updateLayer: (layerId: string, name: string) => apiPatch<BackendLayer>(`/api/layers/${layerId}`, { name }),
   activateProfile: (profileId: string) => apiPost<BackendProfile>(`/api/profiles/${profileId}/activate`),
   activateLayer: (layerId: string) => apiPost<BackendLayer>(`/api/layers/${layerId}/activate`),
   createBinding: (layerId: string, payload: BackendBindingCreatePayload) =>

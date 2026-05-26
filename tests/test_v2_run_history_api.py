@@ -135,3 +135,40 @@ def test_run_output_previews_are_truncated(client, monkeypatch):
     assert len(run["stderr_preview"]) == 1000
     assert run["stdout_preview"] == "x" * 1000
     assert run["stderr_preview"] == "y" * 1000
+
+
+def test_clear_runs_deletes_all_runs(client, monkeypatch):
+    _, _, binding = create_profile_layer_binding(client)
+    patch_executor(monkeypatch, {"ok": True, "exit_code": 0})
+    client.post(f"/api/actions/{binding['action_id']}/test")
+    client.post(f"/api/actions/{binding['action_id']}/test")
+    assert len(client.get("/api/runs").json()) == 2
+
+    response = client.delete("/api/runs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["deleted"] == 2
+    assert client.get("/api/runs").json() == []
+
+
+def test_clear_runs_does_not_affect_bindings_or_actions(client, monkeypatch):
+    profile, layer, binding = create_profile_layer_binding(client)
+    patch_executor(monkeypatch, {"ok": True, "exit_code": 0})
+    client.post(f"/api/actions/{binding['action_id']}/test")
+
+    client.delete("/api/runs")
+
+    # Binding and action still exist
+    bindings = client.get(f"/api/layers/{layer['id']}/bindings").json()
+    assert len(bindings) == 1
+    assert bindings[0]["id"] == binding["id"]
+    assert bindings[0]["action_id"] == binding["action_id"]
+
+
+def test_clear_runs_on_empty_history_returns_zero(client):
+    response = client.delete("/api/runs")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "deleted": 0}

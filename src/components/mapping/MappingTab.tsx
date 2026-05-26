@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ActiveBindingsList } from "../bindings/ActiveBindingsList";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { RunHistoryPreview } from "../history/RunHistoryPreview";
 import type { BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
 import type {
@@ -8,12 +9,13 @@ import type {
   KeyboardNote,
   MidiMonitorEvent,
   V2BindingSummary,
+  V2MidiEventPayload,
   V2RunSummary,
 } from "../v2/types";
 import { CcFaderPanel } from "./CcFaderPanel";
 import { KeyboardGrid } from "./KeyboardGrid";
 import { MidiInputMonitor } from "./MidiInputMonitor";
-import { QuickBindPanel } from "./QuickBindPanel";
+import { QuickBindPanel, type TileCapture } from "./QuickBindPanel";
 
 type Props = {
   events: MidiMonitorEvent[];
@@ -27,7 +29,9 @@ type Props = {
   onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
   onDeleteBinding: (bindingId: string) => Promise<void>;
+  onClearRuns?: () => Promise<void>;
   liveMatchedBindingId?: string | null;
+  lastMidiEvent?: V2MidiEventPayload | null;
 };
 
 function SectionHeader({
@@ -66,9 +70,21 @@ export function MappingTab({
   onDryRunAction,
   onTestAction,
   onDeleteBinding,
+  onClearRuns,
   liveMatchedBindingId,
+  lastMidiEvent,
 }: Props) {
   const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
+  const [clearRunsOpen, setClearRunsOpen] = useState(false);
+  const tileCaptureKeyRef = useRef(0);
+  const [tileCapture, setTileCapture] = useState<TileCapture | null>(null);
+
+  function handleNoteClick(note: number) {
+    setTileCapture({ type: "note", value: note, key: ++tileCaptureKeyRef.current });
+  }
+  function handleCcClick(controller: number) {
+    setTileCapture({ type: "cc", value: controller, key: ++tileCaptureKeyRef.current });
+  }
   const highlightedBindingId = selectedBindingId ?? liveMatchedBindingId ?? null;
   const selectedBinding = useMemo(
     () => bindings.find((binding) => binding.id === selectedBindingId) ?? null,
@@ -89,17 +105,19 @@ export function MappingTab({
             onDryRunAction={onDryRunAction}
             onTestAction={onTestAction}
             onBindingCreated={(binding) => setSelectedBindingId(binding.id)}
+            lastMidiEvent={lastMidiEvent}
+            tileCapture={tileCapture}
           />
         </div>
 
         {/* Column 2 — Note map + control map */}
         <div className="order-1 min-w-0 space-y-2 xl:order-2">
-          <KeyboardGrid notes={notes} />
-          <CcFaderPanel bars={bars} />
+          <KeyboardGrid notes={notes} onNoteClick={handleNoteClick} />
+          <CcFaderPanel bars={bars} onCcClick={handleCcClick} />
         </div>
 
         {/* Column 3 — Active bindings + run history (stacks under center on xl, side at 2xl) */}
-        <div className="order-3 grid min-w-0 gap-2 xl:grid-cols-2 2xl:grid-cols-1">
+        <div className="order-3 grid min-w-0 gap-2 xl:grid-cols-2 xl:items-start 2xl:grid-cols-1">
           <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
             <SectionHeader
               title="Active Bindings"
@@ -122,34 +140,52 @@ export function MappingTab({
               className="mb-2 block w-full !text-[11.5px]"
               aria-label="Search bindings"
             />
-            <ActiveBindingsList
-              bindings={bindings}
-              selectedBindingId={highlightedBindingId}
-              onSelectBinding={(binding) => setSelectedBindingId(binding.id)}
-              onDeleteBinding={(binding) => {
-                void onDeleteBinding(binding.id).then(() => {
-                  setSelectedBindingId((current) => (current === binding.id ? null : current));
-                });
-              }}
-            />
+            <div className="max-h-96 overflow-y-auto">
+              <ActiveBindingsList
+                bindings={bindings}
+                selectedBindingId={highlightedBindingId}
+                onSelectBinding={(binding) => setSelectedBindingId(binding.id)}
+                onDeleteBinding={(binding) => {
+                  void onDeleteBinding(binding.id).then(() => {
+                    setSelectedBindingId((current) => (current === binding.id ? null : current));
+                  });
+                }}
+              />
+            </div>
           </section>
 
           <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
             <SectionHeader
               title="Run History"
+              count={runs.length}
               trailing={
-                <button
-                  type="button"
-                  className="!h-6 rounded-md border border-white/10 bg-white/[0.03] !px-2 !text-[10.5px] text-white/75 hover:bg-white/[0.06]"
-                >
-                  View All
-                </button>
+                <div className="flex items-center gap-1">
+                  {runs.length > 0 && onClearRuns && (
+                    <button
+                      type="button"
+                      onClick={() => setClearRunsOpen(true)}
+                      className="!h-6 rounded-md border border-white/10 !px-2 !text-[10.5px] text-white/55 hover:text-white/80"
+                      style={{ background: "rgba(255,255,255,0.03)" }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               }
             />
-            <RunHistoryPreview runs={runs} />
+            <div className="max-h-64 overflow-y-auto">
+              <RunHistoryPreview runs={runs} />
+            </div>
           </section>
         </div>
       </div>
+      <ConfirmDialog
+        open={clearRunsOpen}
+        message="Clear all run history?"
+        confirmLabel="Clear"
+        onConfirm={() => { setClearRunsOpen(false); void onClearRuns?.(); }}
+        onCancel={() => setClearRunsOpen(false)}
+      />
     </div>
   );
 }

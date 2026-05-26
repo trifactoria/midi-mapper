@@ -75,6 +75,7 @@ export function V2Shell() {
     keyboardNotes,
     ccBars,
     liveMatchedBindingId,
+    lastMidiEvent,
     loading,
     dataSourceLabel,
     midiStatus,
@@ -82,8 +83,13 @@ export function V2Shell() {
     selectedInputPort,
     setAutomationArmed,
     setSelectedInputPort,
+    clearRuns,
     activateProfile,
     activateLayer,
+    createProfile,
+    renameProfile,
+    createLayer,
+    renameLayer,
     canMutateBindings,
     createBinding,
     deleteBinding,
@@ -133,6 +139,10 @@ export function V2Shell() {
               layers={layers}
               onProfileActivate={(profileId) => void activateProfile(profileId)}
               onLayerActivate={(layerId) => void activateLayer(layerId)}
+              onCreateProfile={createProfile}
+              onCreateLayer={createLayer}
+              onRenameProfile={renameProfile}
+              onRenameLayer={renameLayer}
             />
           </div>
 
@@ -180,12 +190,14 @@ export function V2Shell() {
                   onDryRunAction={dryRunAction}
                   onTestAction={testAction}
                   onDeleteBinding={deleteBinding}
+                  onClearRuns={clearRuns}
                   liveMatchedBindingId={liveMatchedBindingId}
+                  lastMidiEvent={lastMidiEvent}
                 />
               )}
               {activeTab === "bindings" && <BindingsPanel bindings={bindings} />}
               {activeTab === "actions" && <ActionsPanel bindings={bindings} />}
-              {activeTab === "history" && <RunHistoryPanel runs={runs} />}
+              {activeTab === "history" && <RunHistoryPanel runs={runs} onClearRuns={clearRuns} />}
               {activeTab === "settings" && <SettingsPanel />}
             </main>
           </div>

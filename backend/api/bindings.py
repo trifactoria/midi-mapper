@@ -274,23 +274,37 @@ async def delete_v2_binding(binding_id: int) -> Dict[str, Any]:
     deleted_action_id = None
 
     async with db_connect() as db:
+        # Preserve run history: NULL out the FK reference so runs survive.
+        await db.execute("UPDATE runs SET binding_id = NULL WHERE binding_id = ?", (binding_id,))
+        # Migration tracking rows have a NOT NULL FK — remove them before the binding.
+        await db.execute("DELETE FROM legacy_binding_migrations WHERE binding_v2_id = ?", (binding_id,))
         await db.execute("DELETE FROM bindings_v2 WHERE id = ?", (binding_id,))
 
-        trigger_cursor = await db.execute(
-            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE trigger_id = ?",
-            (trigger_id,),
+        # Only delete trigger if nothing else references it.
+        # layers.activation_trigger_id has no ON DELETE clause and would block deletion.
+        trigger_binding_cur = await db.execute(
+            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE trigger_id = ?", (trigger_id,)
         )
-        trigger_refs = await trigger_cursor.fetchone()
-        if trigger_refs["count"] == 0:
+        trigger_layer_cur = await db.execute(
+            "SELECT COUNT(*) AS count FROM layers WHERE activation_trigger_id = ?", (trigger_id,)
+        )
+        trigger_binding_refs = (await trigger_binding_cur.fetchone())["count"]
+        trigger_layer_refs = (await trigger_layer_cur.fetchone())["count"]
+        if trigger_binding_refs == 0 and trigger_layer_refs == 0:
             await db.execute("DELETE FROM triggers WHERE id = ?", (trigger_id,))
             deleted_trigger_id = trigger_id
 
-        action_cursor = await db.execute(
-            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE action_id = ?",
-            (action_id,),
+        # Only delete action if no bindings and no runs still reference it.
+        # runs.action_id has no ON DELETE clause and would block deletion.
+        action_binding_cur = await db.execute(
+            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE action_id = ?", (action_id,)
         )
-        action_refs = await action_cursor.fetchone()
-        if action_refs["count"] == 0:
+        action_run_cur = await db.execute(
+            "SELECT COUNT(*) AS count FROM runs WHERE action_id = ?", (action_id,)
+        )
+        action_binding_refs = (await action_binding_cur.fetchone())["count"]
+        action_run_refs = (await action_run_cur.fetchone())["count"]
+        if action_binding_refs == 0 and action_run_refs == 0:
             await db.execute("DELETE FROM actions WHERE id = ?", (action_id,))
             deleted_action_id = action_id
 

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { V2LayerSummary, V2ProfileSummary } from "../v2/types";
 
 type Props = {
@@ -5,15 +6,36 @@ type Props = {
   layers: V2LayerSummary[];
   onProfileActivate?: (profileId: string) => void;
   onLayerActivate?: (layerId: string) => void;
+  onCreateProfile?: () => Promise<string | null>;
+  onCreateLayer?: () => Promise<string | null>;
+  onRenameProfile?: (profileId: string, name: string) => Promise<void>;
+  onRenameLayer?: (layerId: string, name: string) => Promise<void>;
 };
 
-function PlusButton({ label }: { label: string }) {
+type EditTarget = { type: "profile" | "layer"; id: string; draft: string } | null;
+
+function PlusButton({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
-      className="grid !h-5 !w-5 place-items-center rounded border border-white/10 bg-white/[0.04] !p-0 text-white/70 hover:bg-white/[0.08]"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "grid !h-5 !w-5 place-items-center rounded border !p-0",
+        disabled
+          ? "cursor-not-allowed border-white/5 bg-white/[0.02] text-white/20"
+          : "border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08]",
+      ].join(" ")}
       aria-label={label}
-      title={label}
+      title={disabled ? "Create a profile first" : label}
     >
       <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="1.6">
         <path d="M8 3v10M3 8h10" />
@@ -30,86 +52,183 @@ function StarIcon() {
   );
 }
 
-export function ProfileSidebar({ profiles, layers, onProfileActivate, onLayerActivate }: Props) {
+export function ProfileSidebar({
+  profiles,
+  layers,
+  onProfileActivate,
+  onLayerActivate,
+  onCreateProfile,
+  onCreateLayer,
+  onRenameProfile,
+  onRenameLayer,
+}: Props) {
+  const [editing, setEditing] = useState<EditTarget>(null);
+
+  function startEdit(type: "profile" | "layer", id: string, currentName: string) {
+    setEditing({ type, id, draft: currentName });
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+  }
+
+  async function commitRename() {
+    if (!editing) return;
+    const { type, id, draft } = editing;
+    const name = draft.trim();
+    setEditing(null);
+    if (!name) return;
+    if (type === "profile") {
+      await onRenameProfile?.(id, name);
+    } else {
+      await onRenameLayer?.(id, name);
+    }
+  }
+
+  async function handleCreateProfile() {
+    const newId = await onCreateProfile?.();
+    if (newId) startEdit("profile", newId, "New Profile");
+  }
+
+  async function handleCreateLayer() {
+    const newId = await onCreateLayer?.();
+    if (newId) startEdit("layer", newId, "New Layer");
+  }
+
+  const rowBase = "group flex w-full items-center gap-2 rounded !px-2 !py-1 text-left transition";
+  const rowActive = "bg-cyan-300/[0.06] text-white shadow-[inset_0_0_0_1px_rgba(0,180,210,0.18)]";
+  const rowInactive = "text-white/70 hover:bg-white/[0.04] hover:text-white/90";
+  const layerRowActive = "bg-white/[0.06] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.10)]";
+
   return (
     <aside className="flex h-full min-h-0 flex-col border-r border-white/10 bg-black/55 shadow-[inset_-8px_0_24px_-12px_rgba(0,0,0,0.6)]">
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5">
+        {/* Profiles section */}
         <section>
           <div className="mb-1.5 flex items-center justify-between px-1">
             <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.18em] text-white/45">
               Profiles
             </h2>
-            <PlusButton label="New profile" />
+            <PlusButton label="New profile" onClick={() => void handleCreateProfile()} />
           </div>
           <div className="space-y-px">
-            {profiles.map((profile) => (
-              <button
-                type="button"
-                key={profile.id}
-                onClick={() => onProfileActivate?.(profile.id)}
-                className={[
-                  "group flex w-full items-center gap-2 rounded !px-2 !py-1 text-left transition",
-                  profile.active
-                    ? "bg-cyan-300/[0.06] text-white shadow-[inset_0_0_0_1px_rgba(0,180,210,0.18)]"
-                    : "text-white/70 hover:bg-white/[0.04] hover:text-white/90",
-                ].join(" ")}
-              >
-                <span
-                  className={[
-                    "h-1.5 w-1.5 shrink-0 rounded-full",
-                    profile.active
-                      ? "bg-cyan-300 shadow-[0_0_7px_rgba(0,180,210,0.6)]"
-                      : "bg-white/20",
-                  ].join(" ")}
-                />
-                <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
-                  {profile.name}
-                </span>
-                {profile.starred && (
-                  <span className="text-amber-300/90" aria-label="favorite">
-                    <StarIcon />
+            {profiles.length === 0 && (
+              <p className="px-1 py-1.5 text-[11px] text-white/30">No profiles</p>
+            )}
+            {profiles.map((profile) =>
+              editing?.type === "profile" && editing.id === profile.id ? (
+                <div key={profile.id} className={[rowBase, rowActive].join(" ")}>
+                  <span
+                    className={[
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      "bg-cyan-300 shadow-[0_0_7px_rgba(0,180,210,0.6)]",
+                    ].join(" ")}
+                  />
+                  <input
+                    autoFocus
+                    className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white focus:outline-none"
+                    value={editing.draft}
+                    onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
+                      if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+                    }}
+                    onBlur={() => void commitRename()}
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  key={profile.id}
+                  onClick={() => onProfileActivate?.(profile.id)}
+                  className={[rowBase, profile.active ? rowActive : rowInactive].join(" ")}
+                >
+                  <span
+                    className={[
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      profile.active
+                        ? "bg-cyan-300 shadow-[0_0_7px_rgba(0,180,210,0.6)]"
+                        : "bg-white/20",
+                    ].join(" ")}
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate text-[12px] font-medium"
+                    onDoubleClick={(e) => { e.stopPropagation(); startEdit("profile", profile.id, profile.name); }}
+                  >
+                    {profile.name}
                   </span>
-                )}
-              </button>
-            ))}
+                  {profile.starred && (
+                    <span className="text-amber-300/90" aria-label="favorite">
+                      <StarIcon />
+                    </span>
+                  )}
+                </button>
+              ),
+            )}
           </div>
         </section>
 
+        {/* Layers section */}
         <section>
           <div className="mb-1.5 flex items-center justify-between px-1">
             <h2 className="text-[9.5px] font-semibold uppercase tracking-[0.18em] text-white/45">
               Layers
             </h2>
-            <PlusButton label="New layer" />
+            <PlusButton
+              label="New layer"
+              onClick={() => void handleCreateLayer()}
+              disabled={profiles.length === 0}
+            />
           </div>
           <div className="space-y-px">
-            {layers.map((layer) => (
-              <button
-                type="button"
-                key={layer.id}
-                onClick={() => onLayerActivate?.(layer.id)}
-                className={[
-                  "group flex w-full items-center gap-2 rounded !px-2 !py-1 text-left transition",
-                  layer.active
-                    ? "bg-white/[0.06] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.10)]"
-                    : "text-white/70 hover:bg-white/[0.04] hover:text-white/90",
-                ].join(" ")}
-              >
-                <span
-                  className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{
-                    backgroundColor: layer.color,
-                    boxShadow: layer.active ? `0 0 10px ${layer.color}` : "none",
-                  }}
-                />
-                <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
-                  {layer.name}
-                </span>
-                <span className="shrink-0 font-mono text-[10px] tabular-nums text-white/35">
-                  {layer.bindingCount}
-                </span>
-              </button>
-            ))}
+            {layers.length === 0 && (
+              <p className="px-1 py-1.5 text-[11px] text-white/30">No layers</p>
+            )}
+            {layers.map((layer) =>
+              editing?.type === "layer" && editing.id === layer.id ? (
+                <div key={layer.id} className={[rowBase, layerRowActive].join(" ")}>
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: layer.color ?? "#00d4ff", boxShadow: `0 0 10px ${layer.color ?? "#00d4ff"}` }}
+                  />
+                  <input
+                    autoFocus
+                    className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white focus:outline-none"
+                    value={editing.draft}
+                    onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
+                      if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+                    }}
+                    onBlur={() => void commitRename()}
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  key={layer.id}
+                  onClick={() => onLayerActivate?.(layer.id)}
+                  className={[rowBase, layer.active ? layerRowActive : rowInactive].join(" ")}
+                >
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{
+                      backgroundColor: layer.color ?? "#00d4ff",
+                      boxShadow: layer.active ? `0 0 10px ${layer.color ?? "#00d4ff"}` : "none",
+                    }}
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate text-[12px] font-medium"
+                    onDoubleClick={(e) => { e.stopPropagation(); startEdit("layer", layer.id, layer.name); }}
+                  >
+                    {layer.name}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-white/35">
+                    {layer.bindingCount}
+                  </span>
+                </button>
+              ),
+            )}
           </div>
         </section>
       </div>
@@ -135,6 +254,12 @@ export function ProfileLayerCompactBar({ profiles, layers, onProfileActivate, on
   const activeProfile = profiles.find((p) => p.active) ?? profiles[0];
   const activeLayer = layers.find((l) => l.active) ?? layers[0];
 
+  if (!activeProfile && !activeLayer && profiles.length === 0 && layers.length === 0) {
+    return (
+      <p className="text-[11px] text-white/35">No profiles or layers — check backend or create one via sidebar.</p>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
       <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2">
@@ -159,10 +284,12 @@ export function ProfileLayerCompactBar({ profiles, layers, onProfileActivate, on
         <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/40">
           Layer
         </span>
-        <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: activeLayer.color, boxShadow: `0 0 10px ${activeLayer.color}` }}
-        />
+        {activeLayer && (
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: activeLayer.color, boxShadow: `0 0 10px ${activeLayer.color}` }}
+          />
+        )}
         <select
           aria-label="Active layer"
           className="min-w-0 flex-1 truncate border-none bg-transparent p-0 text-sm text-white focus:ring-0"

@@ -44,6 +44,7 @@ export type V2BindingSummary = {
   layer: string;
   enabled: boolean;
   requireArmed: boolean;
+  displayColor?: string;
   /** Legacy fields kept for back-compat with other panels */
   label?: string;
   trigger?: string;
@@ -76,7 +77,7 @@ export type MidiMonitorEvent = {
   matched: boolean;
 };
 
-export type NoteDotColor = "cyan" | "purple" | "amber" | "orange" | "red" | "emerald";
+export type NoteDotColor = "cyan" | "purple" | "amber" | "orange" | "red" | "emerald" | "violet" | "rose" | "blue" | "slate";
 
 export type KeyboardNote = {
   note: number;

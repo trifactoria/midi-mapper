@@ -2,6 +2,7 @@ import type { KeyboardNote, NoteDotColor } from "../v2/types";
 
 type Props = {
   notes: KeyboardNote[];
+  onNoteClick?: (note: number) => void;
 };
 
 const DOT_COLOR: Record<NoteDotColor, string> = {
@@ -11,6 +12,10 @@ const DOT_COLOR: Record<NoteDotColor, string> = {
   orange: "bg-orange-300",
   red: "bg-red-300",
   emerald: "bg-emerald-300",
+  violet: "bg-violet-300",
+  rose: "bg-rose-300",
+  blue: "bg-blue-300",
+  slate: "bg-slate-400",
 };
 
 // A sharp/accidental note (C#, D#, F#, G#, A#) — semitone with a `#`
@@ -20,7 +25,7 @@ function isSharp(midi: number) {
   return [1, 3, 6, 8, 10].includes(midi % 12);
 }
 
-export function KeyboardGrid({ notes }: Props) {
+export function KeyboardGrid({ notes, onNoteClick }: Props) {
   return (
     <section className="rounded-md border border-white/12 bg-white/[0.038] px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.055),0_6px_22px_-8px_rgba(0,0,0,0.6)]">
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -90,6 +95,7 @@ export function KeyboardGrid({ notes }: Props) {
                 stateClass,
               ].join(" ")}
               title={`${note.note} ${note.label}`}
+              onClick={() => onNoteClick?.(note.note)}
             >
               {note.dots && note.dots.length > 0 && (
                 <span className="absolute left-0.5 top-0.5 flex gap-0.5">
@@ -123,17 +129,6 @@ export function KeyboardGrid({ notes }: Props) {
         })}
       </div>
 
-      <div className="mt-1 flex flex-wrap items-center gap-3 text-[10.5px] text-white/45">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" /> Bound
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-purple-300" /> Pressed
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> Selected
-        </span>
-      </div>
     </section>
   );
 }

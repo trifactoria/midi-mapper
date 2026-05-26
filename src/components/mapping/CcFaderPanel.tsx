@@ -2,6 +2,7 @@ import type { CcBar } from "../v2/types";
 
 type Props = {
   bars: CcBar[];
+  onCcClick?: (controller: number) => void;
 };
 
 const BAR_COLOR = {
@@ -13,7 +14,7 @@ const BAR_COLOR = {
   red: "bg-rose-400 shadow-[0_0_8px_rgba(244,114,128,0.55)]",
 } as const;
 
-export function CcFaderPanel({ bars }: Props) {
+export function CcFaderPanel({ bars, onCcClick }: Props) {
   return (
     <section className="rounded-md border border-white/12 bg-white/[0.038] px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.055),0_6px_22px_-8px_rgba(0,0,0,0.6)]">
       <div className="mb-1.5 flex items-center justify-between">
@@ -39,8 +40,11 @@ export function CcFaderPanel({ bars }: Props) {
             return (
               <div
                 key={bar.index}
-                className="relative flex h-full flex-col justify-end overflow-hidden rounded-sm bg-white/[0.025]"
+                className={["relative flex h-full flex-col justify-end overflow-hidden rounded-sm bg-white/[0.025]", onCcClick ? "cursor-pointer hover:ring-1 hover:ring-white/20" : ""].join(" ").trim()}
                 title={`CC ${bar.index} · value ${bar.value}`}
+                onClick={() => onCcClick?.(bar.index)}
+                role={onCcClick ? "button" : undefined}
+                tabIndex={onCcClick ? 0 : undefined}
               >
                 <div
                   className={["w-full rounded-sm transition-all", color].join(" ")}

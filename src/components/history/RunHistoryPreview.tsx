@@ -27,6 +27,12 @@ function statusPill(run: V2RunSummary) {
 }
 
 export function RunHistoryPreview({ runs }: Props) {
+  if (runs.length === 0) {
+    return (
+      <p className="py-2 text-center text-[11px] text-white/30">No runs yet</p>
+    );
+  }
+
   return (
     <div className="space-y-1">
       {runs.map((run) => (

@@ -218,6 +218,70 @@ def test_delete_binding_removes_related_trigger_and_action_when_safe(client, app
         assert con.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
 
 
+def test_delete_binding_with_run_history_succeeds_and_preserves_runs(client, app_module):
+    _, layer = create_profile_layer(client)
+    binding = create_note_binding(client, layer["id"]).json()
+
+    with sqlite3.connect(app_module.DB_PATH) as con:
+        con.execute("PRAGMA foreign_keys=ON")
+        # Run references binding only (no action_id) — action can still be cleaned up.
+        con.execute(
+            "INSERT INTO runs(binding_id, action_summary, status, started_at) VALUES (?, ?, ?, ?)",
+            (binding["id"], "echo editor", "success", "2024-01-01T00:00:00+00:00"),
+        )
+        con.commit()
+
+    response = client.delete(f"/api/bindings/{binding['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["deleted_binding_id"] == binding["id"]
+    assert client.get(f"/api/layers/{layer['id']}/bindings").json() == []
+    with sqlite3.connect(app_module.DB_PATH) as con:
+        row = con.execute("SELECT binding_id, action_summary FROM runs").fetchone()
+        assert row is not None, "run row should be preserved"
+        assert row[0] is None, "binding_id should be NULLed after binding deletion"
+        assert row[1] == "echo editor"
+
+
+def test_delete_binding_with_action_referenced_by_runs_does_not_crash(client, app_module):
+    _, layer = create_profile_layer(client)
+    binding = create_note_binding(client, layer["id"]).json()
+
+    with sqlite3.connect(app_module.DB_PATH) as con:
+        con.execute("PRAGMA foreign_keys=ON")
+        # Run references both binding_id AND action_id — action must not be deleted.
+        con.execute(
+            "INSERT INTO runs(binding_id, action_id, action_summary, status, started_at) VALUES (?, ?, ?, ?, ?)",
+            (binding["id"], binding["action_id"], "echo editor", "success", "2024-01-01T00:00:00+00:00"),
+        )
+        con.commit()
+
+    response = client.delete(f"/api/bindings/{binding['id']}")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["ok"] is True
+    assert result["deleted_binding_id"] == binding["id"]
+    # Action must be preserved because a run still references it.
+    assert result["deleted_action_id"] is None
+    assert client.get(f"/api/layers/{layer['id']}/bindings").json() == []
+    with sqlite3.connect(app_module.DB_PATH) as con:
+        # Run row survives with its action_id intact.
+        row = con.execute("SELECT binding_id, action_id FROM runs").fetchone()
+        assert row is not None
+        assert row[0] is None, "binding_id nulled"
+        assert row[1] == binding["action_id"], "action_id preserved"
+        # Action row still exists.
+        count = con.execute("SELECT COUNT(*) FROM actions WHERE id = ?", (binding["action_id"],)).fetchone()[0]
+        assert count == 1, "action row should survive when run references it"
+
+
+def test_delete_nonexistent_binding_returns_404(client):
+    response = client.delete("/api/bindings/99999")
+    assert response.status_code == 404
+
+
 def test_dry_run_does_not_execute(client, monkeypatch):
     _, layer = create_profile_layer(client)
     binding = create_note_binding(client, layer["id"]).json()

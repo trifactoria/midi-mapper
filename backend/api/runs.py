@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException
 
-from backend.db import db_fetchall, db_fetchone
+from backend.db import db_connect, db_fetchall, db_fetchone
 
 
 router = APIRouter()
@@ -39,6 +39,14 @@ async def list_runs() -> List[Dict[str, Any]]:
         """
     )
     return [dict(row) for row in rows]
+
+
+@router.delete("/api/runs")
+async def clear_runs() -> Dict[str, Any]:
+    async with db_connect() as db:
+        cursor = await db.execute("DELETE FROM runs")
+        await db.commit()
+    return {"ok": True, "deleted": cursor.rowcount}
 
 
 @router.get("/api/runs/{run_id}")
