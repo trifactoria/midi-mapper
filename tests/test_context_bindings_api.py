@@ -1,4 +1,8 @@
-def test_context_binding_crud(client):
+def test_context_binding_crud(client, app_module):
+    assert app_module.SCHEMA_PATH == app_module.PROJECT_ROOT / "schema.sql"
+    assert app_module.DOTENV_PATH == app_module.PROJECT_ROOT / ".env"
+    assert app_module.DEFAULT_DB_PATH == app_module.PROJECT_ROOT / "midi_map.db"
+
     ports = client.get("/api/ports").json()
     assert ports == [{"id": 1, "name": "Test MIDI In", "online": True}]
 

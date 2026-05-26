@@ -2,16 +2,66 @@ import asyncio
 import importlib
 import sys
 
+import pytest
+
 
 class FakeProcess:
     pid = 4321
 
 
 def test_shell_execution_is_disabled_by_default(tmp_path, monkeypatch):
+    pytest.importorskip("aiosqlite")
+    pytest.importorskip("dotenv")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("mido")
+
     monkeypatch.delenv("MIDI_MAPPER_EXEC_USE_SHELL", raising=False)
     monkeypatch.setenv("MIDI_MAPPER_DB_PATH", str(tmp_path / "db.sqlite"))
 
-    sys.modules.pop("app", None)
+    for module_name in (
+        "app",
+        "backend.main",
+        "backend.api.websocket",
+        "backend.api.settings",
+        "backend.api.ports",
+        "backend.api.midi",
+        "backend.api.health",
+        "backend.api.contexts",
+        "backend.api.bindings",
+        "backend.services",
+        "backend.schemas",
+        "backend.runtime",
+        "backend.ws",
+        "backend.midi.matcher",
+        "backend.midi.normalize",
+        "backend.midi.state",
+        "backend.actions.notifications",
+        "backend.actions.executor",
+        "backend.migrations",
+        "backend.db",
+        "backend.config",
+    ):
+        sys.modules.pop(module_name, None)
+    backend_pkg = sys.modules.get("backend")
+    if backend_pkg is not None:
+        for attr in ("main", "migrations", "db", "config", "midi", "api", "services", "schemas", "runtime", "ws"):
+            if hasattr(backend_pkg, attr):
+                delattr(backend_pkg, attr)
+    api_pkg = sys.modules.get("backend.api")
+    if api_pkg is not None:
+        for attr in ("bindings", "contexts", "health", "midi", "ports", "settings", "websocket"):
+            if hasattr(api_pkg, attr):
+                delattr(api_pkg, attr)
+    midi_pkg = sys.modules.get("backend.midi")
+    if midi_pkg is not None:
+        for attr in ("matcher", "normalize", "state"):
+            if hasattr(midi_pkg, attr):
+                delattr(midi_pkg, attr)
+    actions_pkg = sys.modules.get("backend.actions")
+    if actions_pkg is not None:
+        for attr in ("executor", "notifications"):
+            if hasattr(actions_pkg, attr):
+                delattr(actions_pkg, attr)
     app = importlib.import_module("app")
 
     assert app.EXEC_USE_SHELL is False
