@@ -40,12 +40,18 @@ def app_module(tmp_path, monkeypatch):
         "app",
         "backend.main",
         "backend.api.websocket",
+        "backend.api.v2_bindings",
         "backend.api.settings",
+        "backend.api.runs",
+        "backend.api.profiles",
         "backend.api.ports",
         "backend.api.midi",
+        "backend.api.layers",
         "backend.api.health",
+        "backend.api.devices",
         "backend.api.contexts",
         "backend.api.bindings",
+        "backend.api.actions",
         "backend.services",
         "backend.schemas",
         "backend.runtime",
@@ -53,6 +59,7 @@ def app_module(tmp_path, monkeypatch):
         "backend.midi.matcher",
         "backend.midi.normalize",
         "backend.midi.state",
+        "backend.actions.history",
         "backend.actions.notifications",
         "backend.actions.executor",
         "backend.migrations",
@@ -67,7 +74,21 @@ def app_module(tmp_path, monkeypatch):
                 delattr(backend_pkg, attr)
     api_pkg = sys.modules.get("backend.api")
     if api_pkg is not None:
-        for attr in ("bindings", "contexts", "health", "midi", "ports", "settings", "websocket"):
+        for attr in (
+            "actions",
+            "bindings",
+            "contexts",
+            "devices",
+            "health",
+            "layers",
+            "midi",
+            "ports",
+            "profiles",
+            "runs",
+            "settings",
+            "v2_bindings",
+            "websocket",
+        ):
             if hasattr(api_pkg, attr):
                 delattr(api_pkg, attr)
     midi_pkg = sys.modules.get("backend.midi")
@@ -77,7 +98,7 @@ def app_module(tmp_path, monkeypatch):
                 delattr(midi_pkg, attr)
     actions_pkg = sys.modules.get("backend.actions")
     if actions_pkg is not None:
-        for attr in ("executor", "notifications"):
+        for attr in ("executor", "history", "notifications"):
             if hasattr(actions_pkg, attr):
                 delattr(actions_pkg, attr)
     module = importlib.import_module("app")
