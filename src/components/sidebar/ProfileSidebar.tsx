@@ -3,6 +3,8 @@ import type { V2LayerSummary, V2ProfileSummary } from "../v2/types";
 type Props = {
   profiles: V2ProfileSummary[];
   layers: V2LayerSummary[];
+  onProfileActivate?: (profileId: string) => void;
+  onLayerActivate?: (layerId: string) => void;
 };
 
 function PlusButton({ label }: { label: string }) {
@@ -28,7 +30,7 @@ function StarIcon() {
   );
 }
 
-export function ProfileSidebar({ profiles, layers }: Props) {
+export function ProfileSidebar({ profiles, layers, onProfileActivate, onLayerActivate }: Props) {
   return (
     <aside className="flex h-full min-h-0 flex-col border-r border-white/10 bg-black/55 shadow-[inset_-8px_0_24px_-12px_rgba(0,0,0,0.6)]">
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2.5">
@@ -44,6 +46,7 @@ export function ProfileSidebar({ profiles, layers }: Props) {
               <button
                 type="button"
                 key={profile.id}
+                onClick={() => onProfileActivate?.(profile.id)}
                 className={[
                   "group flex w-full items-center gap-2 rounded !px-2 !py-1 text-left transition",
                   profile.active
@@ -84,6 +87,7 @@ export function ProfileSidebar({ profiles, layers }: Props) {
               <button
                 type="button"
                 key={layer.id}
+                onClick={() => onLayerActivate?.(layer.id)}
                 className={[
                   "group flex w-full items-center gap-2 rounded !px-2 !py-1 text-left transition",
                   layer.active
@@ -127,7 +131,7 @@ export function ProfileSidebar({ profiles, layers }: Props) {
 }
 
 // Compact horizontal selectors for mobile. Active profile/layer become dropdowns.
-export function ProfileLayerCompactBar({ profiles, layers }: Props) {
+export function ProfileLayerCompactBar({ profiles, layers, onProfileActivate, onLayerActivate }: Props) {
   const activeProfile = profiles.find((p) => p.active) ?? profiles[0];
   const activeLayer = layers.find((l) => l.active) ?? layers[0];
 
@@ -140,7 +144,8 @@ export function ProfileLayerCompactBar({ profiles, layers }: Props) {
         <select
           aria-label="Active profile"
           className="min-w-0 flex-1 truncate border-none bg-transparent p-0 text-sm text-white focus:ring-0"
-          defaultValue={activeProfile.id}
+          value={activeProfile?.id ?? ""}
+          onChange={(event) => onProfileActivate?.(event.target.value)}
         >
           {profiles.map((profile) => (
             <option key={profile.id} value={profile.id} className="bg-zinc-900">
@@ -161,7 +166,8 @@ export function ProfileLayerCompactBar({ profiles, layers }: Props) {
         <select
           aria-label="Active layer"
           className="min-w-0 flex-1 truncate border-none bg-transparent p-0 text-sm text-white focus:ring-0"
-          defaultValue={activeLayer.id}
+          value={activeLayer?.id ?? ""}
+          onChange={(event) => onLayerActivate?.(event.target.value)}
         >
           {layers.map((layer) => (
             <option key={layer.id} value={layer.id} className="bg-zinc-900">

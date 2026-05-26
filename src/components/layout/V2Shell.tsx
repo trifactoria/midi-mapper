@@ -9,16 +9,11 @@ import { ProfileSidebar, ProfileLayerCompactBar } from "../sidebar/ProfileSideba
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { AutomationTopbar } from "../topbar/AutomationTopbar";
 import {
-  appStats,
-  automationState,
-  bindings,
   ccBars,
   keyboardNotes,
-  layers,
   monitorEvents,
-  profiles,
-  runs,
 } from "../v2/mockData";
+import { useV2ReadData } from "../v2/useV2ReadData";
 
 type TabId = "mapping" | "bindings" | "actions" | "history" | "settings";
 
@@ -74,6 +69,29 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
 
 export function V2Shell() {
   const [activeTab, setActiveTab] = useState<TabId>("mapping");
+  const {
+    profiles,
+    layers,
+    bindings,
+    runs,
+    automation,
+    appStats,
+    loading,
+    error,
+    dataSourceLabel,
+    midiStatus,
+    setAutomationArmed,
+    setMatchingMode,
+    activateProfile,
+    activateLayer,
+    canMutateBindings,
+    createBinding,
+    deleteBinding,
+    dryRunAction,
+    testAction,
+  } = useV2ReadData();
+  const midiUnavailable = midiStatus?.available === false || midiStatus?.degraded === true;
+  const midiLabel = midiUnavailable ? midiStatus?.message ?? "MIDI unavailable" : appStats.midiInput;
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden bg-[#070a10] text-white">
@@ -89,17 +107,31 @@ export function V2Shell() {
 
       {/* Contained dashboard surface */}
       <div className="relative mx-auto flex min-h-screen w-full max-w-[1840px] flex-col">
-        <AutomationTopbar state={automationState} />
+        <AutomationTopbar
+          state={automation}
+          onAutomationArmedChange={(armed) => void setAutomationArmed(armed)}
+          onMatchingModeChange={(matchingMode) => void setMatchingMode(matchingMode)}
+        />
 
         {/* Mobile profile/layer compact bar */}
         <div className="border-b border-white/10 bg-zinc-950/85 px-3 py-2 lg:hidden">
-          <ProfileLayerCompactBar profiles={profiles} layers={layers} />
+          <ProfileLayerCompactBar
+            profiles={profiles}
+            layers={layers}
+            onProfileActivate={(profileId) => void activateProfile(profileId)}
+            onLayerActivate={(layerId) => void activateLayer(layerId)}
+          />
         </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[224px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)]">
           {/* Left sidebar (lg+) */}
           <div className="hidden lg:block">
-            <ProfileSidebar profiles={profiles} layers={layers} />
+            <ProfileSidebar
+              profiles={profiles}
+              layers={layers}
+              onProfileActivate={(profileId) => void activateProfile(profileId)}
+              onLayerActivate={(layerId) => void activateLayer(layerId)}
+            />
           </div>
 
           {/* Workspace */}
@@ -140,7 +172,12 @@ export function V2Shell() {
                   bars={ccBars}
                   bindings={bindings}
                   runs={runs}
-                  automation={automationState}
+                  automation={automation}
+                  canMutateBindings={canMutateBindings}
+                  onCreateBinding={createBinding}
+                  onDryRunAction={dryRunAction}
+                  onTestAction={testAction}
+                  onDeleteBinding={deleteBinding}
                 />
               )}
               {activeTab === "bindings" && <BindingsPanel bindings={bindings} />}
@@ -154,13 +191,26 @@ export function V2Shell() {
         {/* Status footer */}
         <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-white/10 bg-zinc-950/85 px-3 py-1.5 text-[10.5px] text-white/55 backdrop-blur sm:px-4">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
+            <span
+              className={[
+                "h-1.5 w-1.5 rounded-full",
+                midiUnavailable
+                  ? "bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.65)]"
+                  : "bg-emerald-300 shadow-[0_0_6px_rgba(52,211,153,0.7)]",
+              ].join(" ")}
+            />
             <span className="uppercase tracking-[0.12em] text-white/40">MIDI Input</span>
-            <span className="font-mono text-white/80">{appStats.midiInput}</span>
+            <span className="font-mono text-white/80">{midiLabel}</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="uppercase tracking-[0.12em] text-white/40">Last Event</span>
-            <span className="font-mono text-white/80">{appStats.lastEvent}</span>
+            <span className="font-mono text-white/80">
+              {loading ? "Loading backend..." : error ?? appStats.lastEvent}
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="uppercase tracking-[0.12em] text-white/40">Data</span>
+            <span className="font-mono text-white/80">{dataSourceLabel}</span>
           </span>
           <span className="ml-auto inline-flex items-center gap-3.5 font-mono text-white/65 tabular-nums">
             <span>

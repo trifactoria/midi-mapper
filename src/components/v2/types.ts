@@ -29,8 +29,16 @@ export type BindingKind = "note" | "cc";
 export type V2BindingSummary = {
   id: string;
   kind: BindingKind;
+  actionId?: string;
   triggerLabel: string;
   triggerCondition: string;
+  channel?: number;
+  note?: number;
+  controller?: number;
+  valueMin?: number;
+  valueMax?: number;
+  velocityMin?: number;
+  velocityMax?: number;
   actionLabel: string;
   command: string;
   layer: string;

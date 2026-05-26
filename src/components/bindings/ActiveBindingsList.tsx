@@ -3,6 +3,9 @@ import type { V2BindingSummary } from "../v2/types";
 type Props = {
   bindings: V2BindingSummary[];
   compact?: boolean;
+  selectedBindingId?: string | null;
+  onSelectBinding?: (binding: V2BindingSummary) => void;
+  onDeleteBinding?: (binding: V2BindingSummary) => void;
 };
 
 function KindBadge({ kind }: { kind: V2BindingSummary["kind"] }) {
@@ -40,15 +43,24 @@ function KindGlyph({ kind }: { kind: V2BindingSummary["kind"] }) {
   );
 }
 
-export function ActiveBindingsList({ bindings, compact = false }: Props) {
+export function ActiveBindingsList({
+  bindings,
+  compact = false,
+  selectedBindingId,
+  onSelectBinding,
+  onDeleteBinding,
+}: Props) {
   return (
     <div className="space-y-1">
       {bindings.map((binding) => (
         <article
           key={binding.id}
+          onClick={() => onSelectBinding?.(binding)}
           className={[
             "rounded-md border bg-zinc-900/65 px-2 py-1.5 transition",
-            binding.enabled
+            selectedBindingId === binding.id
+              ? "border-cyan-300/25 shadow-[inset_0_0_0_1px_rgba(0,180,210,0.12)]"
+              : binding.enabled
               ? "border-white/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]"
               : "border-white/6 opacity-70",
           ].join(" ")}
@@ -75,8 +87,12 @@ export function ActiveBindingsList({ bindings, compact = false }: Props) {
               <KindBadge kind={binding.kind} />
               <button
                 type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeleteBinding?.(binding);
+                }}
                 className="grid !h-5 !w-5 place-items-center rounded border border-white/8 bg-white/[0.03] !p-0 text-white/45 hover:bg-white/[0.06]"
-                aria-label="Binding options"
+                aria-label="Delete binding"
               >
                 <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor">
                   <circle cx="8" cy="3.5" r="1" />

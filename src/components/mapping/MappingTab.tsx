@@ -1,5 +1,7 @@
+import { useMemo, useState } from "react";
 import { ActiveBindingsList } from "../bindings/ActiveBindingsList";
 import { RunHistoryPreview } from "../history/RunHistoryPreview";
+import type { BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
 import type {
   AutomationState,
   CcBar,
@@ -20,6 +22,11 @@ type Props = {
   bindings: V2BindingSummary[];
   runs: V2RunSummary[];
   automation: AutomationState;
+  canMutateBindings: boolean;
+  onCreateBinding: (payload: BackendBindingCreatePayload) => Promise<V2BindingSummary>;
+  onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
+  onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
+  onDeleteBinding: (bindingId: string) => Promise<void>;
 };
 
 function SectionHeader({
@@ -46,7 +53,25 @@ function SectionHeader({
   );
 }
 
-export function MappingTab({ events, notes, bars, bindings, runs, automation }: Props) {
+export function MappingTab({
+  events,
+  notes,
+  bars,
+  bindings,
+  runs,
+  automation,
+  canMutateBindings,
+  onCreateBinding,
+  onDryRunAction,
+  onTestAction,
+  onDeleteBinding,
+}: Props) {
+  const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
+  const selectedBinding = useMemo(
+    () => bindings.find((binding) => binding.id === selectedBindingId) ?? null,
+    [bindings, selectedBindingId],
+  );
+
   return (
     <div className="space-y-2">
       <MidiInputMonitor events={events} automation={automation} />
@@ -54,7 +79,14 @@ export function MappingTab({ events, notes, bars, bindings, runs, automation }: 
       <div className="grid gap-2.5 xl:grid-cols-[284px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_336px]">
         {/* Column 1 — Binding editor */}
         <div className="order-2 min-w-0 space-y-2 xl:order-1">
-          <QuickBindPanel />
+          <QuickBindPanel
+            selectedBinding={selectedBinding}
+            canMutateBindings={canMutateBindings}
+            onCreateBinding={onCreateBinding}
+            onDryRunAction={onDryRunAction}
+            onTestAction={onTestAction}
+            onBindingCreated={(binding) => setSelectedBindingId(binding.id)}
+          />
         </div>
 
         {/* Column 2 — Note map + control map */}
@@ -87,7 +119,16 @@ export function MappingTab({ events, notes, bars, bindings, runs, automation }: 
               className="mb-2 block w-full !text-[11.5px]"
               aria-label="Search bindings"
             />
-            <ActiveBindingsList bindings={bindings} />
+            <ActiveBindingsList
+              bindings={bindings}
+              selectedBindingId={selectedBindingId}
+              onSelectBinding={(binding) => setSelectedBindingId(binding.id)}
+              onDeleteBinding={(binding) => {
+                void onDeleteBinding(binding.id).then(() => {
+                  setSelectedBindingId((current) => (current === binding.id ? null : current));
+                });
+              }}
+            />
           </section>
 
           <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">

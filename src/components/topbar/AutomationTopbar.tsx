@@ -4,6 +4,8 @@ import type { AutomationState } from "../v2/types";
 
 type Props = {
   state: AutomationState;
+  onAutomationArmedChange?: (armed: boolean) => void;
+  onMatchingModeChange?: (matchingMode: AutomationState["matchingMode"]) => void;
 };
 
 function Switch({ on, size = "md" }: { on: boolean; size?: "sm" | "md" }) {
@@ -56,7 +58,7 @@ function ToggleLine({ label, on }: { label: string; on: boolean }) {
   );
 }
 
-export function AutomationTopbar({ state }: Props) {
+export function AutomationTopbar({ state, onAutomationArmedChange, onMatchingModeChange }: Props) {
   return (
     <header className="flex items-center gap-3 border-b border-white/[0.08] bg-[rgba(7,10,18,0.72)] px-3 py-1.5 shadow-[0_1px_0_rgba(255,255,255,0.025),0_8px_22px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md backdrop-saturate-150 sm:px-4">
       {/* Brand */}
@@ -77,13 +79,16 @@ export function AutomationTopbar({ state }: Props) {
 
       {/* AUTOMATION ARMED — centered cluster */}
       <div className="ml-auto flex items-center gap-2.5">
-        <div
+        <button
+          type="button"
+          onClick={() => onAutomationArmedChange?.(!state.armed)}
           className={[
             "flex !h-8 items-center gap-2.5 rounded-md border !px-2.5 !text-[10px] uppercase tracking-[0.16em]",
             state.armed
               ? "border-emerald-300/30 bg-emerald-400/[0.06] text-emerald-100 shadow-[0_0_22px_-8px_rgba(52,211,153,0.55)]"
               : "border-white/10 bg-white/[0.03] text-white/55",
           ].join(" ")}
+          aria-pressed={state.armed}
         >
           <span className="font-semibold tracking-[0.18em]">Automation Armed</span>
           <span
@@ -103,7 +108,7 @@ export function AutomationTopbar({ state }: Props) {
               <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" />
             </svg>
           </span>
-        </div>
+        </button>
       </div>
 
       {/* Right cluster */}
@@ -114,7 +119,7 @@ export function AutomationTopbar({ state }: Props) {
             aria-label="Matching mode"
             className="!h-6 !rounded !border-white/10 !bg-black/40 !px-1.5 !py-0 !text-[11px]"
             value={state.matchingMode}
-            onChange={() => undefined}
+            onChange={(event) => onMatchingModeChange?.(event.target.value as AutomationState["matchingMode"])}
           >
             <option value="legacy">Legacy</option>
             <option value="v2">V2</option>
