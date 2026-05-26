@@ -30,7 +30,7 @@ export function Header() {
               title="Menu"
             >
               <Image
-                src="logo.png"
+                src="/logo.png"
                 alt="MIDI Mapper"
                 width={24}
                 height={24}
