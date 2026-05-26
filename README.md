@@ -75,6 +75,16 @@ npm run lint
 npm run build
 ```
 
+## Local Development
+
+For repeatable local startup and verification commands, see
+[docs/dev.md](docs/dev.md). The short path is:
+
+```bash
+bash scripts/dev-stack.sh
+bash scripts/check.sh
+```
+
 ## Security and Local-Only Notes
 
 - MIDI bindings can execute local commands. Treat every binding as code that can
