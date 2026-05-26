@@ -59,7 +59,7 @@ export function MidiInputMonitor({ events, automation }: Props) {
           </span>
           <span className="truncate font-mono text-[12.5px] text-white/90">
             {last
-              ? `Note On · Ch ${last.channel} · ${last.value}`
+              ? `${last.type} · Ch ${last.channel} · ${last.value}`
               : "Waiting for MIDI input..."}
           </span>
           <span className="ml-auto hidden truncate font-mono text-[10.5px] text-white/40 md:inline">

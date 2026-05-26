@@ -110,3 +110,33 @@ export type AppStats = {
   bindings: number;
   actions: number;
 };
+
+export type V2MidiEventPayload = {
+  ts?: number;
+  port_name?: string;
+  source_port_name?: string;
+  selected_input_port?: string | null;
+  device_id?: number | string | null;
+  type?: string;
+  channel?: number | null;
+  effective_channel?: number | null;
+  note?: number | null;
+  velocity?: number | null;
+  cc?: number | null;
+  value?: number | null;
+  matched_binding_id?: number | string | null;
+  matched_layer_id?: number | string | null;
+  matched_profile_id?: number | string | null;
+  action_execution?: {
+    ok?: boolean;
+    run_id?: number | string;
+    error?: string;
+    stdout?: string;
+    stdout_preview?: string;
+    stderr?: string;
+    stderr_preview?: string;
+  } | null;
+  execution_status?: string | null;
+  binding_match?: unknown;
+  v2_binding_match?: unknown;
+};

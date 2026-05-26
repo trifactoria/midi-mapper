@@ -1,5 +1,7 @@
 import { API_BASE } from "../useMidiApi";
 
+export const WS_EVENTS_URL = `${API_BASE.replace(/^http/, "ws")}/ws/events`;
+
 export type BackendProfile = {
   id: number | string;
   name?: string | null;
@@ -113,6 +115,18 @@ export type BackendDevice = {
   connected?: boolean | number | null;
 };
 
+export type BackendPort = {
+  id: number | string;
+  name: string;
+  online?: boolean;
+};
+
+export type BackendInputSettings = {
+  selected_input_port?: string | null;
+  available_input_ports?: string[];
+  source?: string;
+};
+
 export type BackendMidiStatus = {
   available?: boolean | null;
   degraded?: boolean | null;
@@ -120,6 +134,7 @@ export type BackendMidiStatus = {
   error?: string | null;
   input_ports?: string[] | null;
   output_ports?: string[] | null;
+  selected_input_port?: string | null;
 };
 
 export type BackendHealth = {
@@ -185,6 +200,10 @@ export const v2Api = {
       matching_mode: matchingMode,
     }),
   devices: () => apiGet<BackendDevice[]>("/api/devices"),
+  ports: () => apiGet<BackendPort[]>("/api/ports"),
+  inputSettings: () => apiGet<BackendInputSettings>("/api/settings/input"),
+  updateInputSettings: (selectedInputPort: string | null) =>
+    apiPatch<BackendInputSettings>("/api/settings/input", { selected_input_port: selectedInputPort }),
   health: () => apiGet<BackendHealth>("/api/health"),
   activateProfile: (profileId: string) => apiPost<BackendProfile>(`/api/profiles/${profileId}/activate`),
   activateLayer: (layerId: string) => apiPost<BackendLayer>(`/api/layers/${layerId}/activate`),

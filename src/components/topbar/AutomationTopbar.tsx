@@ -1,11 +1,14 @@
 "use client";
 
 import type { AutomationState } from "../v2/types";
+import type { BackendPort } from "../v2/api";
 
 type Props = {
   state: AutomationState;
+  inputPorts?: BackendPort[];
+  selectedInputPort?: string | null;
   onAutomationArmedChange?: (armed: boolean) => void;
-  onMatchingModeChange?: (matchingMode: AutomationState["matchingMode"]) => void;
+  onSelectedInputPortChange?: (portName: string | null) => void;
 };
 
 function Switch({ on, size = "md" }: { on: boolean; size?: "sm" | "md" }) {
@@ -58,7 +61,16 @@ function ToggleLine({ label, on }: { label: string; on: boolean }) {
   );
 }
 
-export function AutomationTopbar({ state, onAutomationArmedChange, onMatchingModeChange }: Props) {
+export function AutomationTopbar({
+  state,
+  inputPorts = [],
+  selectedInputPort,
+  onAutomationArmedChange,
+  onSelectedInputPortChange,
+}: Props) {
+  const selectedValue = selectedInputPort ?? "";
+  const hasPorts = inputPorts.length > 0;
+
   return (
     <header className="flex items-center gap-3 border-b border-white/[0.08] bg-[rgba(7,10,18,0.72)] px-3 py-1.5 shadow-[0_1px_0_rgba(255,255,255,0.025),0_8px_22px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md backdrop-saturate-150 sm:px-4">
       {/* Brand */}
@@ -114,16 +126,19 @@ export function AutomationTopbar({ state, onAutomationArmedChange, onMatchingMod
       {/* Right cluster */}
       <div className="flex shrink-0 items-center gap-2">
         <label className="flex !h-8 items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] !px-2.5 !text-[10.5px] text-white/70">
-          <span className="uppercase tracking-[0.12em] text-white/50">Matching</span>
+          <span className="uppercase tracking-[0.12em] text-white/50">Input</span>
           <select
-            aria-label="Matching mode"
+            aria-label="MIDI input"
             className="!h-6 !rounded !border-white/10 !bg-black/40 !px-1.5 !py-0 !text-[11px]"
-            value={state.matchingMode}
-            onChange={(event) => onMatchingModeChange?.(event.target.value as AutomationState["matchingMode"])}
+            value={selectedValue}
+            onChange={(event) => onSelectedInputPortChange?.(event.target.value || null)}
           >
-            <option value="legacy">Legacy</option>
-            <option value="v2">V2</option>
-            <option value="dual">Dual</option>
+            <option value="">{hasPorts ? "All Inputs" : "No MIDI device"}</option>
+            {inputPorts.map((port) => (
+              <option key={port.name} value={port.name}>
+                {port.online === false ? `${port.name} (offline)` : port.name}
+              </option>
+            ))}
           </select>
         </label>
 

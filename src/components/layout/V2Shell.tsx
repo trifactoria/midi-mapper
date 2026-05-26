@@ -8,11 +8,6 @@ import { MappingTab } from "../mapping/MappingTab";
 import { ProfileSidebar, ProfileLayerCompactBar } from "../sidebar/ProfileSidebar";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { AutomationTopbar } from "../topbar/AutomationTopbar";
-import {
-  ccBars,
-  keyboardNotes,
-  monitorEvents,
-} from "../v2/mockData";
 import { useV2ReadData } from "../v2/useV2ReadData";
 
 type TabId = "mapping" | "bindings" | "actions" | "history" | "settings";
@@ -76,12 +71,17 @@ export function V2Shell() {
     runs,
     automation,
     appStats,
+    monitorEvents,
+    keyboardNotes,
+    ccBars,
+    liveMatchedBindingId,
     loading,
-    error,
     dataSourceLabel,
     midiStatus,
+    inputPorts,
+    selectedInputPort,
     setAutomationArmed,
-    setMatchingMode,
+    setSelectedInputPort,
     activateProfile,
     activateLayer,
     canMutateBindings,
@@ -91,7 +91,7 @@ export function V2Shell() {
     testAction,
   } = useV2ReadData();
   const midiUnavailable = midiStatus?.available === false || midiStatus?.degraded === true;
-  const midiLabel = midiUnavailable ? midiStatus?.message ?? "MIDI unavailable" : appStats.midiInput;
+  const midiLabel = selectedInputPort ?? (midiUnavailable ? midiStatus?.message ?? "MIDI unavailable" : appStats.midiInput);
 
   return (
     <div className="relative min-h-screen w-full overflow-x-hidden bg-[#070a10] text-white">
@@ -109,8 +109,10 @@ export function V2Shell() {
       <div className="relative mx-auto flex min-h-screen w-full max-w-[1840px] flex-col">
         <AutomationTopbar
           state={automation}
+          inputPorts={inputPorts}
+          selectedInputPort={selectedInputPort}
           onAutomationArmedChange={(armed) => void setAutomationArmed(armed)}
-          onMatchingModeChange={(matchingMode) => void setMatchingMode(matchingMode)}
+          onSelectedInputPortChange={(portName) => void setSelectedInputPort(portName)}
         />
 
         {/* Mobile profile/layer compact bar */}
@@ -178,6 +180,7 @@ export function V2Shell() {
                   onDryRunAction={dryRunAction}
                   onTestAction={testAction}
                   onDeleteBinding={deleteBinding}
+                  liveMatchedBindingId={liveMatchedBindingId}
                 />
               )}
               {activeTab === "bindings" && <BindingsPanel bindings={bindings} />}
@@ -205,7 +208,7 @@ export function V2Shell() {
           <span className="inline-flex items-center gap-1.5">
             <span className="uppercase tracking-[0.12em] text-white/40">Last Event</span>
             <span className="font-mono text-white/80">
-              {loading ? "Loading backend..." : error ?? appStats.lastEvent}
+              {loading ? "Loading backend..." : appStats.lastEvent}
             </span>
           </span>
           <span className="inline-flex items-center gap-1.5">

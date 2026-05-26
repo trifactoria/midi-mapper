@@ -27,6 +27,7 @@ type Props = {
   onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
   onDeleteBinding: (bindingId: string) => Promise<void>;
+  liveMatchedBindingId?: string | null;
 };
 
 function SectionHeader({
@@ -65,8 +66,10 @@ export function MappingTab({
   onDryRunAction,
   onTestAction,
   onDeleteBinding,
+  liveMatchedBindingId,
 }: Props) {
   const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
+  const highlightedBindingId = selectedBindingId ?? liveMatchedBindingId ?? null;
   const selectedBinding = useMemo(
     () => bindings.find((binding) => binding.id === selectedBindingId) ?? null,
     [bindings, selectedBindingId],
@@ -121,7 +124,7 @@ export function MappingTab({
             />
             <ActiveBindingsList
               bindings={bindings}
-              selectedBindingId={selectedBindingId}
+              selectedBindingId={highlightedBindingId}
               onSelectBinding={(binding) => setSelectedBindingId(binding.id)}
               onDeleteBinding={(binding) => {
                 void onDeleteBinding(binding.id).then(() => {
