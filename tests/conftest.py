@@ -59,6 +59,8 @@ def app_module(tmp_path, monkeypatch):
         "backend.midi.matcher",
         "backend.midi.normalize",
         "backend.midi.state",
+        "backend.midi.status",
+        "backend.midi.listener",
         "backend.actions.history",
         "backend.actions.notifications",
         "backend.actions.executor",
@@ -93,7 +95,7 @@ def app_module(tmp_path, monkeypatch):
                 delattr(api_pkg, attr)
     midi_pkg = sys.modules.get("backend.midi")
     if midi_pkg is not None:
-        for attr in ("matcher", "normalize", "state"):
+        for attr in ("listener", "matcher", "normalize", "state", "status"):
             if hasattr(midi_pkg, attr):
                 delattr(midi_pkg, attr)
     actions_pkg = sys.modules.get("backend.actions")

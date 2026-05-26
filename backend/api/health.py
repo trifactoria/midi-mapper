@@ -1,10 +1,10 @@
 from typing import Any, Dict
 
-import mido
 from fastapi import APIRouter
 
 from backend.config import DB_PATH, MAX_NOTE
 from backend.db import db_fetchall, db_fetchone
+from backend.midi.status import get_midi_status, safe_get_input_names, safe_get_output_names
 
 
 router = APIRouter()
@@ -17,6 +17,7 @@ async def health() -> Dict[str, Any]:
         "ok": True,
         "db_path": DB_PATH,
         "version": "midi-mapper",
+        "midi": get_midi_status(),
     }
 
 
@@ -70,6 +71,7 @@ async def diag_db_stats() -> Dict[str, Any]:
 async def capabilities() -> Dict[str, Any]:
     return {
         "max_note": MAX_NOTE,
-        "input_ports": mido.get_input_names(),
-        "output_ports": mido.get_output_names(),
+        "input_ports": safe_get_input_names(context="capabilities input port enumeration"),
+        "output_ports": safe_get_output_names(context="capabilities output port enumeration"),
+        "midi": get_midi_status(),
     }

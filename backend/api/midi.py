@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 import mido
 from fastapi import APIRouter
 
+from backend.midi.status import get_midi_status, safe_get_output_names
 from backend.runtime import OUTPUT_PORT_CACHE
 from backend.schemas import OutputSelectIn, SendContextIn
 from backend.services import get_port_name, get_setting, set_setting
@@ -14,12 +15,16 @@ router = APIRouter()
 @router.get("/api/midi/outputs")
 async def midi_outputs() -> Dict[str, Any]:
     preferred = await get_setting("preferred_output_port")
-    return {"outputs": mido.get_output_names(), "preferred_output_port": preferred}
+    return {
+        "outputs": safe_get_output_names(context="MIDI output list"),
+        "preferred_output_port": preferred,
+        "midi": get_midi_status(),
+    }
 
 
 @router.post("/api/midi/output/select")
 async def midi_output_select(payload: OutputSelectIn) -> Dict[str, Any]:
-    out_names = mido.get_output_names()
+    out_names = safe_get_output_names(context="MIDI output selection")
     if payload.output_name not in out_names:
         return {"ok": False, "error": "Unknown output_name", "available": out_names}
     await set_setting("preferred_output_port", payload.output_name)
@@ -58,7 +63,7 @@ async def midi_send_context(ctx: SendContextIn) -> Dict[str, Any]:
     if not port_name:
         return {"ok": False, "error": "Unknown port_id"}
 
-    out_names = mido.get_output_names()
+    out_names = safe_get_output_names(context="MIDI send output enumeration")
     preferred = await get_setting("preferred_output_port")
 
     out_name: Optional[str] = None

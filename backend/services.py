@@ -1,14 +1,13 @@
 from typing import Optional
 
-import mido
-
 from .db import db_connect, db_exec, db_fetchall, db_fetchone
 from .midi.state import ACTIVE_SELECTION, get_or_create_port_state
+from .midi.status import safe_get_input_names
 
 
 async def ensure_ports_registered() -> None:
     # Register all visible INPUT ports in DB (UI selects from this list).
-    names = mido.get_input_names()
+    names = safe_get_input_names(context="port registration")
     for name in names:
         await db_exec("INSERT OR IGNORE INTO ports(name) VALUES (?)", (name,))
 

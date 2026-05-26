@@ -1,9 +1,9 @@
 from typing import Any, Dict, List, Optional
 
-import mido
 from fastapi import APIRouter, Body
 
 from backend.db import db_connect, db_exec, db_fetchall, db_fetchone
+from backend.midi.status import safe_get_input_names
 from backend.schemas import ActiveContextSetIn, ContextIn, ImportContextIn
 from backend.services import apply_active_selection, get_port_name, set_setting
 
@@ -131,7 +131,7 @@ async def contexts_with_bindings(
     """
 
     rows = await db_fetchall(query, tuple(params))
-    online_ports = set(mido.get_input_names())
+    online_ports = set(safe_get_input_names(context="context port status"))
 
     results = []
     for r in rows:

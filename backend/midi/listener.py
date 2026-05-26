@@ -8,6 +8,7 @@ from backend.config import MAX_NOTE, WS_POLL_INTERVAL
 from backend.midi.matcher import binding_matches_message, selection_matches_event
 from backend.midi.normalize import effective_channel, update_state
 from backend.midi.state import LAST_FIRED, LAST_NOTE_CHANNEL
+from backend.midi.status import mark_listener_disabled, safe_get_input_names
 
 
 async def midi_pump(
@@ -21,11 +22,17 @@ async def midi_pump(
     inputs: List[mido.ports.BaseInput] = []
     try:
         # Open all input ports that exist at startup
-        for name in mido.get_input_names():
+        for name in safe_get_input_names(context="MIDI listener startup"):
             try:
                 inputs.append(mido.open_input(name))
-            except Exception:
+            except Exception as exc:
+                mark_listener_disabled(
+                    f"MIDI input '{name}' could not be opened; continuing without that port: {exc}"
+                )
                 continue
+
+        if not inputs:
+            mark_listener_disabled("No MIDI input ports opened; MIDI runtime is disabled until backend restart")
 
         while True:
             v = await get_setting("keygrab_enabled")
