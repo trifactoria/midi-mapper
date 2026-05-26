@@ -1,6 +1,7 @@
 from typing import Any, Dict
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from backend.db import db_fetchall
 from backend.schemas import ContextIn
@@ -8,6 +9,20 @@ from backend.services import get_setting, set_setting
 
 
 router = APIRouter()
+
+
+class AutomationSettingsPatchIn(BaseModel):
+    armed: bool
+
+
+class MatchingModePatchIn(BaseModel):
+    matching_mode: str
+
+
+def _setting_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.lower() == "true"
 
 
 @router.get("/api/settings")
@@ -20,6 +35,41 @@ async def get_settings() -> Dict[str, str]:
 async def settings_set(key: str, value: str) -> Dict[str, Any]:
     await set_setting(key, value)
     return {"ok": True}
+
+
+@router.get("/api/settings/automation")
+async def automation_settings_get() -> Dict[str, Any]:
+    automation_value = await get_setting("automation_armed")
+    legacy_keygrab_value = await get_setting("keygrab_enabled")
+    return {
+        "armed": _setting_bool(automation_value, True),
+        "legacy_keygrab": _setting_bool(legacy_keygrab_value, True),
+        "mode": "automation_armed",
+        "source": "automation_armed" if automation_value is not None else "default",
+    }
+
+
+@router.patch("/api/settings/automation")
+async def automation_settings_patch(payload: AutomationSettingsPatchIn) -> Dict[str, Any]:
+    await set_setting("automation_armed", "true" if payload.armed else "false")
+    return await automation_settings_get()
+
+
+@router.get("/api/settings/matching")
+async def matching_settings_get() -> Dict[str, Any]:
+    mode = await get_setting("matching_mode")
+    if mode not in ("legacy", "v2", "dual"):
+        mode = "legacy"
+    return {"matching_mode": mode, "source": "setting" if await get_setting("matching_mode") is not None else "default"}
+
+
+@router.patch("/api/settings/matching")
+async def matching_settings_patch(payload: MatchingModePatchIn) -> Dict[str, Any]:
+    if payload.matching_mode not in ("legacy", "v2", "dual"):
+        return {"ok": False, "error": "matching_mode must be legacy, v2, or dual"}
+    await set_setting("matching_mode", payload.matching_mode)
+    state = await matching_settings_get()
+    return {"ok": True, **state}
 
 
 @router.get("/api/keygrab")

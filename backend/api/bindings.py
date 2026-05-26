@@ -1,7 +1,13 @@
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
+from backend.api.v2_bindings import (
+    V2BindingPatchIn,
+    V2TriggerIn,
+    get_v2_binding,
+    validate_trigger,
+)
 from backend.actions.executor import safe_execute_command
 from backend.actions.notifications import send_notification
 from backend.db import db_connect, db_exec, db_fetchall, db_fetchone
@@ -158,3 +164,141 @@ async def run_binding(payload: BindingRunIn) -> Dict[str, Any]:
         result["notify_error"] = notify_result.get("notify_error")
 
     return result
+
+
+@router.patch("/api/bindings/{binding_id}")
+async def update_v2_binding(binding_id: int, payload: V2BindingPatchIn) -> Dict[str, Any]:
+    existing = await get_v2_binding(binding_id)
+    binding_updates = []
+    binding_params: list[Any] = []
+
+    for field_name in (
+        "enabled",
+        "require_armed",
+        "cooldown_ms",
+        "notes",
+        "display_label",
+        "display_color",
+        "display_emoji",
+    ):
+        value = getattr(payload, field_name)
+        if value is not None:
+            binding_updates.append(f"{field_name} = ?")
+            binding_params.append(value)
+
+    trigger_updates = []
+    trigger_params: list[Any] = []
+    if payload.trigger is not None:
+        merged_trigger = V2TriggerIn(
+            event_type=payload.trigger.event_type if payload.trigger.event_type is not None else existing["trigger"]["event_type"],
+            channel=payload.trigger.channel if payload.trigger.channel is not None else existing["trigger"]["channel"],
+            note=payload.trigger.note if payload.trigger.note is not None else existing["trigger"]["note"],
+            controller=payload.trigger.controller if payload.trigger.controller is not None else existing["trigger"]["controller"],
+            value_min=payload.trigger.value_min if payload.trigger.value_min is not None else existing["trigger"]["value_min"],
+            value_max=payload.trigger.value_max if payload.trigger.value_max is not None else existing["trigger"]["value_max"],
+            velocity_min=payload.trigger.velocity_min if payload.trigger.velocity_min is not None else existing["trigger"]["velocity_min"],
+            velocity_max=payload.trigger.velocity_max if payload.trigger.velocity_max is not None else existing["trigger"]["velocity_max"],
+            device_id=payload.trigger.device_id if payload.trigger.device_id is not None else existing["trigger"]["device_id"],
+            port_name=payload.trigger.port_name if payload.trigger.port_name is not None else existing["trigger"]["port_name"],
+        )
+        validate_trigger(merged_trigger)
+        for field_name in (
+            "event_type",
+            "channel",
+            "note",
+            "controller",
+            "value_min",
+            "value_max",
+            "velocity_min",
+            "velocity_max",
+            "device_id",
+            "port_name",
+        ):
+            value = getattr(payload.trigger, field_name)
+            if value is not None:
+                trigger_updates.append(f"{field_name} = ?")
+                trigger_params.append(value.strip() if field_name == "event_type" else value)
+
+    action_updates = []
+    action_params: list[Any] = []
+    if payload.action is not None:
+        if payload.action.type is not None and payload.action.type != "command":
+            raise HTTPException(status_code=400, detail="Only command actions are supported")
+        if payload.action.command is not None and not payload.action.command.strip():
+            raise HTTPException(status_code=400, detail="Action command is required")
+        for field_name in (
+            "label",
+            "command",
+            "args_json",
+            "working_directory",
+            "execution_mode",
+            "timeout_ms",
+            "notify_text",
+            "notify_emoji",
+        ):
+            value = getattr(payload.action, field_name)
+            if value is not None:
+                action_updates.append(f"{field_name} = ?")
+                action_params.append(value)
+
+    async with db_connect() as db:
+        if binding_updates:
+            binding_updates.append("updated_at = CURRENT_TIMESTAMP")
+            await db.execute(
+                f"UPDATE bindings_v2 SET {', '.join(binding_updates)} WHERE id = ?",
+                (*binding_params, binding_id),
+            )
+        if trigger_updates:
+            trigger_updates.append("updated_at = CURRENT_TIMESTAMP")
+            await db.execute(
+                f"UPDATE triggers SET {', '.join(trigger_updates)} WHERE id = ?",
+                (*trigger_params, existing["trigger_id"]),
+            )
+        if action_updates:
+            action_updates.append("updated_at = CURRENT_TIMESTAMP")
+            await db.execute(
+                f"UPDATE actions SET {', '.join(action_updates)} WHERE id = ?",
+                (*action_params, existing["action_id"]),
+            )
+        await db.commit()
+
+    return await get_v2_binding(binding_id)
+
+
+@router.delete("/api/bindings/{binding_id}")
+async def delete_v2_binding(binding_id: int) -> Dict[str, Any]:
+    existing = await get_v2_binding(binding_id)
+    trigger_id = existing["trigger_id"]
+    action_id = existing["action_id"]
+    deleted_trigger_id = None
+    deleted_action_id = None
+
+    async with db_connect() as db:
+        await db.execute("DELETE FROM bindings_v2 WHERE id = ?", (binding_id,))
+
+        trigger_cursor = await db.execute(
+            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE trigger_id = ?",
+            (trigger_id,),
+        )
+        trigger_refs = await trigger_cursor.fetchone()
+        if trigger_refs["count"] == 0:
+            await db.execute("DELETE FROM triggers WHERE id = ?", (trigger_id,))
+            deleted_trigger_id = trigger_id
+
+        action_cursor = await db.execute(
+            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE action_id = ?",
+            (action_id,),
+        )
+        action_refs = await action_cursor.fetchone()
+        if action_refs["count"] == 0:
+            await db.execute("DELETE FROM actions WHERE id = ?", (action_id,))
+            deleted_action_id = action_id
+
+        await db.commit()
+
+    return {
+        "ok": True,
+        "deleted_binding_id": binding_id,
+        "deleted_trigger_id": deleted_trigger_id,
+        "deleted_action_id": deleted_action_id,
+    }

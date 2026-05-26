@@ -1,12 +1,26 @@
 # backend/main.py
 import asyncio
+from contextlib import asynccontextmanager, suppress
 from typing import Any, Dict
 
 import mido
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import bindings, contexts, health, midi, ports, settings, websocket
+from .api import (
+    actions,
+    bindings,
+    contexts,
+    devices,
+    health,
+    layers,
+    midi,
+    ports,
+    profiles,
+    runs,
+    settings,
+    websocket,
+)
 from .actions import executor as _executor
 from .actions.executor import safe_execute_command
 from .actions.notifications import send_notification
@@ -24,7 +38,12 @@ from .config import (
 from .db import db_connect, db_exec, db_fetchall, db_fetchone
 from .migrations import apply_migrations
 from .midi.listener import midi_pump as run_midi_pump
-from .midi.matcher import binding_matches_message, selection_matches_event
+from .midi.matcher import (
+    binding_matches_message,
+    binding_matches_message_v2,
+    get_matching_mode,
+    selection_matches_event,
+)
 from .midi.normalize import effective_channel, update_state
 from .midi.state import (
     ACTIVE_SELECTION,
@@ -74,7 +93,19 @@ _get_or_create_port_state = get_or_create_port_state
 # -----------------------------
 # FastAPI
 # -----------------------------
-app = FastAPI(title="MIDI Mapper Bridge")
+MIDI_PUMP_TASK: Any = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await _startup()
+    try:
+        yield
+    finally:
+        await _shutdown()
+
+
+app = FastAPI(title="MIDI Mapper Bridge", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,6 +118,11 @@ for router in (
     ports.router,
     health.router,
     midi.router,
+    devices.router,
+    profiles.router,
+    layers.router,
+    actions.router,
+    runs.router,
     contexts.router,
     bindings.router,
     settings.router,
@@ -98,18 +134,23 @@ for router in (
 # -----------------------------
 # Lifecycle
 # -----------------------------
-@app.on_event("startup")
 async def _startup() -> None:
+    global MIDI_PUMP_TASK
     await apply_migrations()
     # Clean up orphan contexts (contexts with no bindings)
     await gc_orphan_contexts()
     await ensure_ports_registered()
     await load_and_apply_defaults()
-    asyncio.create_task(midi_pump())
+    MIDI_PUMP_TASK = asyncio.create_task(midi_pump())
 
 
-@app.on_event("shutdown")
 async def _shutdown() -> None:
+    global MIDI_PUMP_TASK
+    if MIDI_PUMP_TASK is not None and not MIDI_PUMP_TASK.done():
+        MIDI_PUMP_TASK.cancel()
+        with suppress(asyncio.CancelledError):
+            await MIDI_PUMP_TASK
+    MIDI_PUMP_TASK = None
     close_output_ports(OUTPUT_PORT_CACHE)
 
 
