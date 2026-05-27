@@ -84,6 +84,12 @@ type V2ReadData = {
   dryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   testAction: (actionId: string) => Promise<BackendActionRunResult>;
   testActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
+  addDelayStep: (bindingId: string, durationMs?: number) => Promise<void>;
+  addCommandStep: (bindingId: string, payload: { label?: string; command: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number }) => Promise<void>;
+  updateActionStep: (bindingId: string, bindingActionId: string, patch: { label?: string; command?: string; durationMs?: number; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number }) => Promise<void>;
+  deleteActionStep: (bindingId: string, bindingActionId: string) => Promise<void>;
+  moveActionStep: (bindingId: string, bindingActionId: string, direction: "up" | "down") => Promise<void>;
+  toggleActionStep: (bindingId: string, bindingActionId: string, enabled: boolean) => Promise<void>;
 };
 
 type ReadResult<T> = {
@@ -735,6 +741,99 @@ export function useV2ReadData(): V2ReadData {
     return v2Api.testActionPreview(payload);
   }, []);
 
+  const addDelayStep = useCallback(async (bindingId: string, durationMs = 1000) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.createBindingAction(backendId, {
+      type: "delay",
+      label: `Wait ${durationMs}ms`,
+      duration_ms: durationMs,
+      enabled: 1,
+    });
+    await load({ quiet: true });
+  }, [load]);
+
+  const addCommandStep = useCallback(async (
+    bindingId: string,
+    payload: { label?: string; command: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number },
+  ) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.createBindingAction(backendId, {
+      type: "command",
+      label: payload.label ?? "",
+      command: payload.command,
+      working_directory: payload.workingDirectory,
+      execution_mode: payload.executionMode ?? "argv",
+      timeout_ms: payload.timeoutMs,
+      enabled: 1,
+    });
+    await load({ quiet: true });
+  }, [load]);
+
+  const updateActionStep = useCallback(async (
+    bindingId: string,
+    bindingActionId: string,
+    patch: { label?: string; command?: string; durationMs?: number; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number },
+  ) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.updateBindingAction(backendId, bindingActionId, {
+      label: patch.label,
+      command: patch.command,
+      duration_ms: patch.durationMs,
+      working_directory: patch.workingDirectory,
+      execution_mode: patch.executionMode,
+      timeout_ms: patch.timeoutMs,
+    });
+    await load({ quiet: true });
+  }, [load]);
+
+  const deleteActionStep = useCallback(async (bindingId: string, bindingActionId: string) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.deleteBindingAction(backendId, bindingActionId);
+    await load({ quiet: true });
+  }, [load]);
+
+  const moveActionStep = useCallback(async (bindingId: string, bindingActionId: string, direction: "up" | "down") => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    const binding = bindings.find((item) => item.id === bindingId);
+    if (!binding) return;
+    const signature = (item: V2BindingSummary) =>
+      [
+        item.layer,
+        item.kind,
+        item.channel ?? "",
+        item.note ?? "",
+        item.controller ?? "",
+        item.velocityMin ?? "",
+        item.velocityMax ?? "",
+        item.valueMin ?? "",
+        item.valueMax ?? "",
+      ].join("|");
+    const groupKey = signature(binding);
+    const actions = bindings
+      .filter((item) => signature(item) === groupKey)
+      .flatMap((item) => item.actions ?? [])
+      .sort((a, b) => a.executionOrder - b.executionOrder || Number(a.bindingId) - Number(b.bindingId));
+    const index = actions.findIndex((action) => action.bindingActionId === bindingActionId);
+    const target = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || target < 0 || target >= actions.length) return;
+    const reordered = [...actions];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    await v2Api.reorderActionGroup(reordered.map((action) => action.bindingActionId));
+    await load({ quiet: true });
+  }, [bindings, load]);
+
+  const toggleActionStep = useCallback(async (bindingId: string, bindingActionId: string, enabled: boolean) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.updateBindingAction(backendId, bindingActionId, { enabled: enabled ? 1 : 0 });
+    await load({ quiet: true });
+  }, [load]);
+
   const keyboardNotes = useMemo(() => {
     const noteColors = new Map<number, NoteDotColor>();
     const noteIconColors = new Map<number, string>();
@@ -831,5 +930,11 @@ export function useV2ReadData(): V2ReadData {
     dryRunAction,
     testAction,
     testActionPreview,
+    addDelayStep,
+    addCommandStep,
+    updateActionStep,
+    deleteActionStep,
+    moveActionStep,
+    toggleActionStep,
   };
 }

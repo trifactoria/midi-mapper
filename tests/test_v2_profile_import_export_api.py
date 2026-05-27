@@ -180,7 +180,7 @@ def test_profile_import_rejects_unsupported_action_type(client):
     response = client.post("/api/profiles/import", json={"payload": exported})
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Only command actions are supported"
+    assert response.json()["detail"] == "Action type must be command or delay"
 
 
 def test_profile_import_preserves_display_icon(client):
@@ -191,3 +191,60 @@ def test_profile_import_preserves_display_icon(client):
     round_trip = client.get(f"/api/profiles/{imported['profile_id']}/export").json()
 
     assert round_trip["bindings_v2"][0]["display_icon"] == "terminal"
+
+
+def test_profile_export_import_preserves_action_sequence(client):
+    profile, _, bindings = create_exportable_profile(client)
+    binding = bindings[0]
+    delay = client.post(
+        f"/api/bindings/{binding['id']}/actions",
+        json={"type": "delay", "duration_ms": 3000},
+    ).json()
+    steps = client.get(f"/api/bindings/{binding['id']}/actions").json()
+    client.post(
+        f"/api/bindings/{binding['id']}/actions/reorder",
+        json=[delay["binding_action_id"], steps[0]["binding_action_id"]],
+    )
+
+    exported = client.get(f"/api/profiles/{profile['id']}/export").json()
+    action_steps = exported["bindings_v2"][0]["action_steps"]
+    assert [step["execution_order"] for step in action_steps] == [0, 1]
+    assert any(action["type"] == "delay" and action["duration_ms"] == 3000 for action in exported["actions"])
+
+    imported = client.post("/api/profiles/import", json={"payload": exported}).json()
+    round_trip = client.get(f"/api/profiles/{imported['profile_id']}/export").json()
+    round_trip_steps = round_trip["bindings_v2"][0]["action_steps"]
+    round_trip_actions_by_key = {action["key"]: action for action in round_trip["actions"]}
+    assert [step["execution_order"] for step in round_trip_steps] == [0, 1]
+    assert [round_trip_actions_by_key[step["action_key"]]["type"] for step in round_trip_steps] == ["delay", "command"]
+
+
+def test_profile_export_import_preserves_cross_binding_trigger_sequence(client):
+    profile, layers, _ = create_exportable_profile(client)
+    layer = layers[0]
+    first = client.post(
+        f"/api/layers/{layer['id']}/bindings",
+        json={
+            "trigger": {"event_type": "note_on", "channel": 1, "note": 48, "velocity_min": 1, "velocity_max": 127},
+            "action": {"type": "command", "label": "Hello", "command": "echo hello"},
+        },
+    ).json()
+    second = client.post(
+        f"/api/layers/{layer['id']}/bindings",
+        json={
+            "trigger": {"event_type": "note_on", "channel": 1, "note": 48, "velocity_min": 1, "velocity_max": 127},
+            "action": {"type": "command", "label": "Browser", "command": "firefox https://skillkraftz.com"},
+        },
+    ).json()
+    first_step = client.get(f"/api/bindings/{first['id']}/actions").json()[0]
+    second_step = client.get(f"/api/bindings/{second['id']}/actions").json()[0]
+    client.post("/api/action-groups/reorder", json=[second_step["binding_action_id"], first_step["binding_action_id"]])
+
+    exported = client.get(f"/api/profiles/{profile['id']}/export").json()
+    imported = client.post("/api/profiles/import", json={"payload": exported}).json()
+    round_trip = client.get(f"/api/profiles/{imported['profile_id']}/export").json()
+    matching_bindings = [
+        binding for binding in round_trip["bindings_v2"]
+        if any(trigger["key"] == binding["trigger_key"] and trigger["note"] == 48 for trigger in round_trip["triggers"])
+    ]
+    assert sorted(step["execution_order"] for binding in matching_bindings for step in binding["action_steps"]) == [0, 1]

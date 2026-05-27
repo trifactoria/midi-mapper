@@ -266,6 +266,19 @@ def _backfill_bindings(con: sqlite3.Connection, profile_id: int) -> None:
 
         con.execute(
             """
+            INSERT OR IGNORE INTO binding_actions(
+              binding_id,
+              action_id,
+              execution_order,
+              enabled
+            )
+            VALUES (?, ?, 0, 1)
+            """,
+            (binding_v2_id, action_id),
+        )
+
+        con.execute(
+            """
             INSERT INTO legacy_binding_migrations(
               legacy_binding_id,
               trigger_id,

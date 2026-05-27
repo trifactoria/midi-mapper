@@ -58,8 +58,11 @@ def _export_key(prefix: str, index: int) -> str:
 
 
 def _require_command_action(action: Dict[str, Any]) -> None:
-    if action.get("type", "command") != "command":
-        raise HTTPException(status_code=400, detail="Only command actions are supported")
+    action_type = action.get("type", "command")
+    if action_type not in ("command", "delay"):
+        raise HTTPException(status_code=400, detail="Action type must be command or delay")
+    if action_type == "delay" and int(action.get("duration_ms") or -1) < 0:
+        raise HTTPException(status_code=400, detail="Delay duration_ms must be 0 or greater")
 
 
 def _require_list(payload: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
@@ -217,6 +220,7 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                   type,
                   label,
                   command,
+                  duration_ms,
                   args_json,
                   working_directory,
                   environment_json,
@@ -227,11 +231,13 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                   notify_text,
                   notify_emoji
                 )
-                VALUES ('command', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    action.get("type", "command"),
                     action.get("label", ""),
                     action.get("command"),
+                    action.get("duration_ms"),
                     action.get("args_json"),
                     action.get("working_directory"),
                     action.get("environment_json"),
@@ -248,10 +254,14 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
         for binding in bindings_data:
             layer_id = layer_ids.get(binding.get("layer_key"))
             trigger_id = trigger_ids.get(binding.get("trigger_key"))
-            action_id = action_ids.get(binding.get("action_key"))
+            action_steps = binding.get("action_steps")
+            first_action_key = binding.get("action_key")
+            if isinstance(action_steps, list) and len(action_steps) > 0:
+                first_action_key = action_steps[0].get("action_key")
+            action_id = action_ids.get(first_action_key)
             if layer_id is None or trigger_id is None or action_id is None:
                 raise HTTPException(status_code=400, detail="Binding references missing layer, trigger, or action")
-            await db.execute(
+            binding_cur = await db.execute(
                 """
                 INSERT INTO bindings_v2(
                   profile_id,
@@ -284,6 +294,32 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                     binding.get("display_icon", ""),
                 ),
             )
+            binding_id = binding_cur.lastrowid
+            if isinstance(action_steps, list) and len(action_steps) > 0:
+                for index, step in enumerate(action_steps):
+                    step_action_id = action_ids.get(step.get("action_key"))
+                    if step_action_id is None:
+                        raise HTTPException(status_code=400, detail="Binding action step references missing action")
+                    await db.execute(
+                        """
+                        INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            binding_id,
+                            step_action_id,
+                            step.get("execution_order", index),
+                            step.get("enabled", 1),
+                        ),
+                    )
+            elif not isinstance(action_steps, list):
+                await db.execute(
+                    """
+                    INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled)
+                    VALUES (?, ?, 0, 1)
+                    """,
+                    (binding_id, action_id),
+                )
 
         await db.commit()
 
@@ -340,6 +376,7 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
           a.type AS action_type,
           a.label AS action_label,
           a.command,
+          a.duration_ms,
           a.args_json,
           a.working_directory,
           a.environment_json,
@@ -364,6 +401,38 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
     exported_triggers: list[Dict[str, Any]] = []
     exported_actions: list[Dict[str, Any]] = []
     exported_bindings: list[Dict[str, Any]] = []
+
+    step_rows = await db_fetchall(
+        """
+        SELECT
+          ba.binding_id,
+          ba.action_id,
+          ba.execution_order,
+          ba.enabled,
+          a.type,
+          a.label,
+          a.command,
+          a.duration_ms,
+          a.args_json,
+          a.working_directory,
+          a.environment_json,
+          a.execution_mode,
+          a.timeout_ms,
+          a.cooldown_ms,
+          a.allow_concurrent,
+          a.notify_text,
+          a.notify_emoji
+        FROM binding_actions ba
+        JOIN actions a ON a.id = ba.action_id
+        JOIN bindings_v2 b ON b.id = ba.binding_id
+        WHERE b.profile_id = ?
+        ORDER BY ba.binding_id, ba.execution_order, ba.id
+        """,
+        (profile_id,),
+    )
+    steps_by_binding: dict[int, list[Dict[str, Any]]] = {}
+    for step in step_rows:
+        steps_by_binding.setdefault(step["binding_id"], []).append(dict(step))
 
     for row in bindings:
         if row["trigger_id"] not in trigger_keys:
@@ -396,6 +465,7 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
                 "type": row["action_type"],
                 "label": row["action_label"],
                 "command": row["command"],
+                "duration_ms": row["duration_ms"],
                 "args_json": row["args_json"],
                 "working_directory": row["working_directory"],
                 "environment_json": row["environment_json"],
@@ -406,10 +476,37 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
                 "notify_text": row["notify_text"],
                 "notify_emoji": row["notify_emoji"],
             })
+        action_steps = []
+        for step in steps_by_binding.get(row["id"], []):
+            if step["action_id"] not in action_keys:
+                action_key = _export_key("action", len(action_keys))
+                action_keys[step["action_id"]] = action_key
+                exported_actions.append({
+                    "key": action_key,
+                    "type": step["type"],
+                    "label": step["label"],
+                    "command": step["command"],
+                    "duration_ms": step["duration_ms"],
+                    "args_json": step["args_json"],
+                    "working_directory": step["working_directory"],
+                    "environment_json": step["environment_json"],
+                    "execution_mode": step["execution_mode"],
+                    "timeout_ms": step["timeout_ms"],
+                    "cooldown_ms": step["cooldown_ms"],
+                    "allow_concurrent": step["allow_concurrent"],
+                    "notify_text": step["notify_text"],
+                    "notify_emoji": step["notify_emoji"],
+                })
+            action_steps.append({
+                "action_key": action_keys[step["action_id"]],
+                "execution_order": step["execution_order"],
+                "enabled": step["enabled"],
+            })
         exported_bindings.append({
             "layer_key": layer_keys[row["layer_id"]],
             "trigger_key": trigger_keys[row["trigger_id"]],
             "action_key": action_keys[row["action_id"]],
+            "action_steps": action_steps,
             "enabled": row["enabled"],
             "require_armed": row["require_armed"],
             "cooldown_ms": row["cooldown_ms"],
@@ -535,6 +632,13 @@ async def delete_profile(profile_id: int) -> Dict[str, Any]:
         binding_rows = await binding_cur.fetchall()
         binding_ids = [r["id"] for r in binding_rows]
         action_ids = [r["action_id"] for r in binding_rows]
+        if binding_ids:
+            placeholders = ",".join("?" for _ in binding_ids)
+            linked_action_cur = await db.execute(
+                f"SELECT action_id FROM binding_actions WHERE binding_id IN ({placeholders})",
+                tuple(binding_ids),
+            )
+            action_ids.extend(r["action_id"] for r in await linked_action_cur.fetchall())
         trigger_ids = set(r["trigger_id"] for r in binding_rows)
 
         layer_cur = await db.execute(
@@ -573,7 +677,12 @@ async def delete_profile(profile_id: int) -> Dict[str, Any]:
 
         for aid in set(action_ids):
             b_cur = await db.execute(
-                "SELECT COUNT(*) AS cnt FROM bindings_v2 WHERE action_id = ?", (aid,)
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM bindings_v2 WHERE action_id = ?) +
+                  (SELECT COUNT(*) FROM binding_actions WHERE action_id = ?) AS cnt
+                """,
+                (aid, aid),
             )
             r_cur = await db.execute(
                 "SELECT COUNT(*) AS cnt FROM runs WHERE action_id = ?", (aid,)

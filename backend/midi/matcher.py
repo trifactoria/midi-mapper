@@ -155,7 +155,49 @@ def _candidate_matches(
     return True
 
 
-def _v2_response(row: Dict[str, Any]) -> Dict[str, Any]:
+async def _binding_action_steps(binding_id: int) -> list[Dict[str, Any]]:
+    rows = await db_fetchall(
+        """
+        SELECT
+          ba.id AS binding_action_id,
+          ba.binding_id,
+          ba.action_id,
+          ba.execution_order,
+          ba.enabled,
+          a.type,
+          a.label,
+          a.command,
+          a.duration_ms,
+          a.args_json,
+          a.working_directory,
+          a.execution_mode,
+          a.timeout_ms,
+          a.notify_text,
+          a.notify_emoji
+        FROM binding_actions ba
+        JOIN actions a ON a.id = ba.action_id
+        WHERE ba.binding_id = ?
+        ORDER BY ba.execution_order, ba.id
+        """,
+        (binding_id,),
+    )
+    return [dict(row) for row in rows]
+
+
+def _v2_response(row: Dict[str, Any], actions: list[Dict[str, Any]]) -> Dict[str, Any]:
+    primary_action = {
+        "id": row["action_id"],
+        "type": row["action_type"],
+        "label": row["action_label"],
+        "command": row["command"],
+        "duration_ms": row["duration_ms"],
+        "args_json": row["args_json"],
+        "working_directory": row["working_directory"],
+        "execution_mode": row["execution_mode"],
+        "timeout_ms": row["timeout_ms"],
+        "notify_text": row["notify_text"],
+        "notify_emoji": row["notify_emoji"],
+    }
     return {
         "id": row["binding_id"],
         "profile_id": row["profile_id"],
@@ -169,6 +211,7 @@ def _v2_response(row: Dict[str, Any]) -> Dict[str, Any]:
         "display_label": row["display_label"],
         "display_color": row["display_color"],
         "display_emoji": row["display_emoji"],
+        "display_icon": row["display_icon"],
         "trigger": {
             "id": row["trigger_id"],
             "event_type": row["event_type"],
@@ -185,19 +228,28 @@ def _v2_response(row: Dict[str, Any]) -> Dict[str, Any]:
             "bank_lsb": row["bank_lsb"],
             "program_filter": row["program_filter"],
         },
-        "action": {
-            "id": row["action_id"],
-            "type": row["action_type"],
-            "label": row["action_label"],
-            "command": row["command"],
-            "args_json": row["args_json"],
-            "working_directory": row["working_directory"],
-            "execution_mode": row["execution_mode"],
-            "timeout_ms": row["timeout_ms"],
-            "notify_text": row["notify_text"],
-            "notify_emoji": row["notify_emoji"],
-        },
+        "action": primary_action,
+        "actions": actions,
     }
+
+
+def _trigger_group_key(row: Dict[str, Any]) -> str:
+    parts = [
+        row.get("layer_id"),
+        row.get("event_type"),
+        row.get("channel"),
+        row.get("note"),
+        row.get("controller"),
+        row.get("velocity_min"),
+        row.get("velocity_max"),
+        row.get("value_min"),
+        row.get("value_max"),
+        row.get("port_name"),
+        row.get("bank_msb"),
+        row.get("bank_lsb"),
+        row.get("program_filter"),
+    ]
+    return "|".join("" if part is None else str(part) for part in parts)
 
 
 async def binding_matches_message_v2(
@@ -232,6 +284,7 @@ async def binding_matches_message_v2(
           b.display_label,
           b.display_color,
           b.display_emoji,
+          b.display_icon,
           t.event_type,
           t.channel,
           t.note,
@@ -248,6 +301,7 @@ async def binding_matches_message_v2(
           a.type AS action_type,
           a.label AS action_label,
           a.command,
+          a.duration_ms,
           a.args_json,
           a.working_directory,
           a.execution_mode,
@@ -266,6 +320,7 @@ async def binding_matches_message_v2(
         (profile_id, layer_id, event_type),
     )
     device_id = await _device_id_for_port(port_name)
+    matches: list[Dict[str, Any]] = []
     for candidate_row in candidates:
         candidate = dict(candidate_row)
         if candidate["require_armed"] and not armed:
@@ -277,5 +332,23 @@ async def binding_matches_message_v2(
             msg=msg,
             derived_flat=derived_flat,
         ):
-            return _v2_response(candidate)
-    return None
+            matches.append(candidate)
+    if not matches:
+        return None
+
+    group_actions: list[Dict[str, Any]] = []
+    for match in matches:
+        group_actions.extend(await _binding_action_steps(int(match["binding_id"])))
+    group_actions.sort(
+        key=lambda step: (
+            step.get("execution_order") if step.get("execution_order") is not None else 0,
+            step.get("binding_id") if step.get("binding_id") is not None else 0,
+            step.get("binding_action_id") if step.get("binding_action_id") is not None else 0,
+        )
+    )
+
+    response = _v2_response(matches[0], group_actions)
+    response["bindings"] = [_v2_response(match, await _binding_action_steps(int(match["binding_id"]))) for match in matches]
+    response["trigger_group_key"] = _trigger_group_key(matches[0])
+    response["group_cooldown_ms"] = max(int(match.get("cooldown_ms") or 0) for match in matches)
+    return response

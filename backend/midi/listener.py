@@ -232,8 +232,9 @@ async def _execute_v2_match(
 
     binding_id = int(binding["id"])
     action = binding.get("action") or {}
-    command = action.get("command") or ""
-    cooldown_ms = binding.get("cooldown_ms", 200)
+    actions = binding.get("actions") or [action]
+    cooldown_ms = binding.get("group_cooldown_ms", binding.get("cooldown_ms", 200))
+    cooldown_key = binding.get("trigger_group_key") or binding_id
 
     payload.update(
         {
@@ -246,39 +247,86 @@ async def _execute_v2_match(
     )
 
     now = time.time() * 1000
-    last = LAST_FIRED.get(("v2", binding_id), 0)
+    last = LAST_FIRED.get(("v2_group", cooldown_key), 0)
     if now - last < cooldown_ms:
         payload["execution_status"] = "cooldown"
         return binding
 
-    if action.get("type") != "command" or not command:
+    enabled_actions = [step for step in actions if step.get("enabled", 1)]
+    if not enabled_actions:
         payload["execution_status"] = "skipped"
         return binding
 
-    LAST_FIRED[("v2", binding_id)] = now
-    started_at = time.time()
-    result = await safe_execute_command(command, execution_mode=action.get("execution_mode", "argv"))
-    run_id = await record_v2_action_run(
-        action_id=int(binding["action_id"]),
-        binding_id=binding_id,
-        profile_id=int(binding["profile_id"]),
-        layer_id=int(binding["layer_id"]),
-        trigger_snapshot_json=_message_snapshot(port_name, msg),
-        action_summary=command,
-        started_at=started_at,
-        result=result,
-    )
-    result["run_id"] = run_id
-    result["action_id"] = binding["action_id"]
-    result["binding_id"] = binding["id"]
-    result["command"] = command
-    payload.update(_execution_metadata(result, started_at))
+    LAST_FIRED[("v2_group", cooldown_key)] = now
+    sequence_results = []
+    overall_ok = True
+    sequence_started_at = time.time()
+    for step in enabled_actions:
+        step_type = step.get("type", "command")
+        step_action_id = int(step.get("action_id") or step.get("id") or binding["action_id"])
+        step_binding_id = int(step.get("binding_id") or binding_id)
+        started_at = time.time()
+        if step_type == "delay":
+            duration_ms = max(0, int(step.get("duration_ms") or 0))
+            await asyncio.sleep(duration_ms / 1000)
+            result = {
+                "ok": True,
+                "action_id": step_action_id,
+                "binding_id": step_binding_id,
+                "duration_ms": duration_ms,
+                "summary": f"Wait {duration_ms}ms",
+            }
+            action_summary = result["summary"]
+        elif step_type == "command" and step.get("command"):
+            command = step.get("command") or ""
+            result = await safe_execute_command(
+                command,
+                execution_mode=step.get("execution_mode", "argv"),
+            )
+            result["command"] = command
+            action_summary = command
+        else:
+            result = {
+                "ok": True,
+                "skipped": True,
+                "action_id": step_action_id,
+                "binding_id": step_binding_id,
+                "summary": "Skipped action",
+            }
+            action_summary = result["summary"]
 
-    notify_text = action.get("notify_text") or ""
-    if notify_text:
-        prefix = "" if result.get("ok") else "❌ "
-        notify_result = await send_notification(prefix + notify_text, action.get("notify_emoji") or "")
-        if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
-            payload["notify_error"] = notify_result.get("notify_error")
+        run_id = await record_v2_action_run(
+            action_id=step_action_id,
+            binding_id=step_binding_id,
+            profile_id=int(binding["profile_id"]),
+            layer_id=int(binding["layer_id"]),
+            trigger_snapshot_json=_message_snapshot(port_name, msg),
+            action_summary=action_summary,
+            started_at=started_at,
+            result=result,
+        )
+        result["run_id"] = run_id
+        result["action_id"] = step_action_id
+        result["binding_id"] = step_binding_id
+        result["execution_order"] = step.get("execution_order")
+        sequence_results.append(result)
+        if not result.get("ok"):
+            overall_ok = False
 
+        notify_text = step.get("notify_text") or ""
+        if notify_text:
+            prefix = "" if result.get("ok") else "❌ "
+            notify_result = await send_notification(prefix + notify_text, step.get("notify_emoji") or "")
+            if notify_result and not notify_result.get("ok") and not notify_result.get("skipped"):
+                payload["notify_error"] = notify_result.get("notify_error")
+
+    aggregate = {
+        "ok": overall_ok,
+        "binding_id": binding["id"],
+        "action_id": sequence_results[-1]["action_id"] if sequence_results else binding["action_id"],
+        "steps": sequence_results,
+        "run_id": sequence_results[-1]["run_id"] if sequence_results else None,
+    }
+    payload.update(_execution_metadata(aggregate, sequence_started_at))
+    payload["action_sequence"] = sequence_results
     return binding

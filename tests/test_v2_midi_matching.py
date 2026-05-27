@@ -81,6 +81,9 @@ def seed_v2_match_binding(
             """,
             (enabled, require_armed),
         )
+        con.execute(
+            "INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled) VALUES (5, 4, 0, 1)"
+        )
         if automation_armed is not None:
             con.execute(
                 "INSERT INTO settings(key, value) VALUES ('automation_armed', ?)",
@@ -107,6 +110,27 @@ def test_v2_note_binding_matches_synthetic_midi_event(app_module):
     assert match["id"] == 5
     assert match["trigger"]["event_type"] == "note_on"
     assert match["action"]["command"] == "echo match"
+
+
+def test_v2_same_trigger_bindings_match_as_one_action_sequence(app_module):
+    seed_v2_match_binding(app_module.DB_PATH)
+    with sqlite3.connect(app_module.DB_PATH) as con:
+        con.execute("PRAGMA foreign_keys=ON")
+        con.execute("INSERT INTO actions(id, type, label, command, execution_mode) VALUES (6, 'command', 'Second', 'echo second', 'argv')")
+        con.execute(
+            """
+            INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed)
+            VALUES (7, 1, 2, 3, 6, 1, 1)
+            """
+        )
+        con.execute("INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled) VALUES (7, 6, 1, 1)")
+        con.commit()
+
+    msg = app_module.mido.Message("note_on", channel=1, note=60, velocity=100)
+    match = match_v2(app_module, "Test MIDI In", msg)
+
+    assert [step["command"] for step in match["actions"]] == ["echo match", "echo second"]
+    assert [binding["id"] for binding in match["bindings"]] == [5, 7]
 
 
 def test_v2_cc_threshold_binding_matches_value_range(app_module):

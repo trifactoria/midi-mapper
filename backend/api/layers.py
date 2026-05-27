@@ -109,6 +109,7 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
               type,
               label,
               command,
+              duration_ms,
               args_json,
               working_directory,
               execution_mode,
@@ -117,11 +118,13 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
               notify_text,
               notify_emoji
             )
-            VALUES ('command', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                payload.action.type,
                 payload.action.label,
-                payload.action.command,
+                payload.action.command if payload.action.type == "command" else None,
+                payload.action.duration_ms,
                 payload.action.args_json,
                 payload.action.working_directory,
                 payload.action.execution_mode,
@@ -167,6 +170,13 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
             ),
         )
         binding_id = binding_cursor.lastrowid
+        await db.execute(
+            """
+            INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled)
+            VALUES (?, ?, 0, 1)
+            """,
+            (binding_id, action_id),
+        )
         await db.commit()
 
     return await get_v2_binding(binding_id)
@@ -239,6 +249,13 @@ async def delete_layer(layer_id: int) -> Dict[str, Any]:
         binding_rows = await binding_cur.fetchall()
         binding_ids = [r["id"] for r in binding_rows]
         action_ids = [r["action_id"] for r in binding_rows]
+        if binding_ids:
+            placeholders = ",".join("?" for _ in binding_ids)
+            linked_action_cur = await db.execute(
+                f"SELECT action_id FROM binding_actions WHERE binding_id IN ({placeholders})",
+                tuple(binding_ids),
+            )
+            action_ids.extend(r["action_id"] for r in await linked_action_cur.fetchall())
         trigger_ids = set(r["trigger_id"] for r in binding_rows)
         if layer["activation_trigger_id"]:
             trigger_ids.add(layer["activation_trigger_id"])
@@ -267,7 +284,12 @@ async def delete_layer(layer_id: int) -> Dict[str, Any]:
 
         for aid in set(action_ids):
             b_cur = await db.execute(
-                "SELECT COUNT(*) AS cnt FROM bindings_v2 WHERE action_id = ?", (aid,)
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM bindings_v2 WHERE action_id = ?) +
+                  (SELECT COUNT(*) FROM binding_actions WHERE action_id = ?) AS cnt
+                """,
+                (aid, aid),
             )
             r_cur = await db.execute(
                 "SELECT COUNT(*) AS cnt FROM runs WHERE action_id = ?", (aid,)

@@ -71,6 +71,65 @@ def test_v2_runtime_executes_action_records_run_and_enriches_payload(monkeypatch
     assert payload["action_execution"]["run_id"] == 9
 
 
+def test_v2_runtime_executes_sequence_in_order_with_delay(monkeypatch):
+    import backend.midi.listener as listener
+
+    binding = {
+        "id": 5,
+        "profile_id": 1,
+        "layer_id": 2,
+        "trigger_id": 3,
+        "action_id": 4,
+        "cooldown_ms": 0,
+        "actions": [
+            {"binding_id": 5, "action_id": 4, "type": "command", "command": "echo one", "execution_order": 0, "enabled": 1},
+            {"binding_id": 8, "action_id": 6, "type": "delay", "duration_ms": 5, "execution_order": 1, "enabled": 1},
+            {"binding_id": 8, "action_id": 7, "type": "command", "command": "echo two", "execution_order": 2, "enabled": 1},
+        ],
+        "action": {"id": 4, "type": "command", "command": "echo one"},
+    }
+    calls = []
+    recorded = []
+
+    async def fake_match(port_name, msg, derived_flat):
+        return binding
+
+    async def fake_execute(command, execution_mode="argv"):
+        calls.append(command)
+        return {"ok": True, "stdout": command}
+
+    async def fake_record(**kwargs):
+        recorded.append(kwargs)
+        return len(recorded)
+
+    async def fake_notify(text, emoji):
+        return {"ok": True, "skipped": True}
+
+    monkeypatch.setattr(listener, "binding_matches_message_v2", fake_match)
+    monkeypatch.setattr(listener, "record_v2_action_run", fake_record)
+    listener.LAST_FIRED.clear()
+
+    msg = SimpleNamespace(type="note_on", channel=1, note=60, velocity=100)
+    payload = {}
+    asyncio.run(
+        listener._execute_v2_match(
+            port_name="Test MIDI In",
+            msg=msg,
+            derived_flat={},
+            payload=payload,
+            safe_execute_command=fake_execute,
+            send_notification=fake_notify,
+        )
+    )
+
+    assert calls == ["echo one", "echo two"]
+    assert [run["action_id"] for run in recorded] == [4, 6, 7]
+    assert [run["binding_id"] for run in recorded] == [5, 8, 8]
+    assert [run["action_summary"] for run in recorded] == ["echo one", "Wait 5ms", "echo two"]
+    assert payload["execution_status"] == "success"
+    assert [step["action_id"] for step in payload["action_sequence"]] == [4, 6, 7]
+
+
 def test_selected_input_port_filter_skips_unselected_port():
     import backend.midi.listener as listener
 

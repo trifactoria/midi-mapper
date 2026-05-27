@@ -109,6 +109,12 @@ export function V2Shell() {
     simulateCc,
     testAction,
     testActionPreview,
+    addDelayStep,
+    addCommandStep,
+    updateActionStep,
+    deleteActionStep,
+    moveActionStep,
+    toggleActionStep,
   } = useV2ReadData();
   const midiUnavailable = midiStatus?.available === false || midiStatus?.degraded === true;
   const midiLabel = selectedInputPort ?? (midiUnavailable ? midiStatus?.message ?? "MIDI unavailable" : appStats.midiInput);
@@ -224,7 +230,17 @@ export function V2Shell() {
                 />
               )}
               {activeTab === "bindings" && <BindingsPanel bindings={bindings} />}
-              {activeTab === "actions" && <ActionsPanel bindings={bindings} />}
+              {activeTab === "actions" && (
+                <ActionsPanel
+                  bindings={bindings}
+                  onAddDelayStep={(bindingId) => void addDelayStep(bindingId, 3000)}
+                  onAddCommandStep={(bindingId, payload) => void addCommandStep(bindingId, payload)}
+                  onUpdateStep={(bindingId, bindingActionId, patch) => void updateActionStep(bindingId, bindingActionId, patch)}
+                  onDeleteStep={(bindingId, bindingActionId) => void deleteActionStep(bindingId, bindingActionId)}
+                  onMoveStep={(bindingId, bindingActionId, direction) => void moveActionStep(bindingId, bindingActionId, direction)}
+                  onToggleStep={(bindingId, bindingActionId, enabled) => void toggleActionStep(bindingId, bindingActionId, enabled)}
+                />
+              )}
               {activeTab === "history" && <RunHistoryPanel runs={runs} onClearRuns={clearRuns} />}
               {activeTab === "settings" && (
                 <SettingsPanel

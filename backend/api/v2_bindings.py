@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from backend.db import db_fetchall, db_fetchone
 
 
-SUPPORTED_ACTION_TYPE = "command"
+SUPPORTED_ACTION_TYPES = {"command", "delay"}
 
 
 class V2TriggerIn(BaseModel):
@@ -23,9 +23,10 @@ class V2TriggerIn(BaseModel):
 
 
 class V2ActionIn(BaseModel):
-    type: str = SUPPORTED_ACTION_TYPE
+    type: str = "command"
     label: str = ""
     command: str = ""
+    duration_ms: Optional[int] = None
     args_json: Optional[str] = None
     working_directory: Optional[str] = None
     execution_mode: str = "argv"
@@ -38,6 +39,7 @@ class V2ActionPatchIn(BaseModel):
     type: Optional[str] = None
     label: Optional[str] = None
     command: Optional[str] = None
+    duration_ms: Optional[int] = None
     args_json: Optional[str] = None
     working_directory: Optional[str] = None
     execution_mode: Optional[str] = None
@@ -105,13 +107,90 @@ def validate_trigger(trigger: V2TriggerIn) -> None:
 
 
 def validate_action(action: V2ActionIn) -> None:
-    if action.type != SUPPORTED_ACTION_TYPE:
-        raise HTTPException(status_code=400, detail="Only command actions are supported")
-    if not action.command.strip():
+    if action.type not in SUPPORTED_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail="Action type must be command or delay")
+    if action.type == "command" and not action.command.strip():
         raise HTTPException(status_code=400, detail="Action command is required")
+    if action.type == "delay" and (action.duration_ms is None or action.duration_ms < 0):
+        raise HTTPException(status_code=400, detail="Delay duration_ms must be 0 or greater")
+
+
+async def list_binding_action_steps(binding_id: int) -> list[Dict[str, Any]]:
+    rows = await db_fetchall(
+        """
+        SELECT
+          ba.id AS binding_action_id,
+          ba.binding_id,
+          ba.action_id,
+          ba.execution_order,
+          ba.enabled,
+          a.type,
+          a.label,
+          a.command,
+          a.duration_ms,
+          a.args_json,
+          a.working_directory,
+          a.environment_json,
+          a.execution_mode,
+          a.timeout_ms,
+          a.cooldown_ms,
+          a.allow_concurrent,
+          a.notify_text,
+          a.notify_emoji,
+          a.legacy_binding_id
+        FROM binding_actions ba
+        JOIN actions a ON a.id = ba.action_id
+        WHERE ba.binding_id = ?
+        ORDER BY ba.execution_order, ba.id
+        """,
+        (binding_id,),
+    )
+    return [
+        {
+            "binding_action_id": row["binding_action_id"],
+            "binding_id": row["binding_id"],
+            "id": row["action_id"],
+            "action_id": row["action_id"],
+            "execution_order": row["execution_order"],
+            "enabled": row["enabled"],
+            "type": row["type"],
+            "label": row["label"],
+            "command": row["command"],
+            "duration_ms": row["duration_ms"],
+            "args_json": row["args_json"],
+            "working_directory": row["working_directory"],
+            "environment_json": row["environment_json"],
+            "execution_mode": row["execution_mode"],
+            "timeout_ms": row["timeout_ms"],
+            "cooldown_ms": row["cooldown_ms"],
+            "allow_concurrent": row["allow_concurrent"],
+            "notify_text": row["notify_text"],
+            "notify_emoji": row["notify_emoji"],
+            "legacy_binding_id": row["legacy_binding_id"],
+        }
+        for row in rows
+    ]
 
 
 def _binding_response(row: Dict[str, Any]) -> Dict[str, Any]:
+    primary_action = {
+        "id": row["action_id"],
+        "type": row["action_type"],
+        "label": row["action_label"],
+        "command": row["command"],
+        "duration_ms": row["duration_ms"],
+        "args_json": row["args_json"],
+        "working_directory": row["working_directory"],
+        "environment_json": row["environment_json"],
+        "execution_mode": row["execution_mode"],
+        "timeout_ms": row["timeout_ms"],
+        "cooldown_ms": row["action_cooldown_ms"],
+        "allow_concurrent": row["allow_concurrent"],
+        "notify_text": row["notify_text"],
+        "notify_emoji": row["notify_emoji"],
+        "legacy_binding_id": row["action_legacy_binding_id"],
+    }
+    actions = row["actions"] if "actions" in row else [primary_action]
     return {
         "id": row["id"],
         "profile_id": row["profile_id"],
@@ -151,22 +230,8 @@ def _binding_response(row: Dict[str, Any]) -> Dict[str, Any]:
             "legacy_context_id": row["trigger_legacy_context_id"],
             "legacy_binding_id": row["trigger_legacy_binding_id"],
         },
-        "action": {
-            "id": row["action_id"],
-            "type": row["action_type"],
-            "label": row["action_label"],
-            "command": row["command"],
-            "args_json": row["args_json"],
-            "working_directory": row["working_directory"],
-            "environment_json": row["environment_json"],
-            "execution_mode": row["execution_mode"],
-            "timeout_ms": row["timeout_ms"],
-            "cooldown_ms": row["action_cooldown_ms"],
-            "allow_concurrent": row["allow_concurrent"],
-            "notify_text": row["notify_text"],
-            "notify_emoji": row["notify_emoji"],
-            "legacy_binding_id": row["action_legacy_binding_id"],
-        },
+        "action": primary_action,
+        "actions": actions,
     }
 
 
@@ -210,6 +275,7 @@ BINDING_SELECT = """
       a.type AS action_type,
       a.label AS action_label,
       a.command,
+      a.duration_ms,
       a.args_json,
       a.working_directory,
       a.environment_json,
@@ -236,7 +302,9 @@ async def get_v2_binding(binding_id: int) -> Dict[str, Any]:
     )
     if not row:
         raise HTTPException(status_code=404, detail="Binding not found")
-    return _binding_response(dict(row))
+    data = dict(row)
+    data["actions"] = await list_binding_action_steps(binding_id)
+    return _binding_response(data)
 
 
 async def list_v2_bindings_for_layer(layer_id: int) -> list[Dict[str, Any]]:
@@ -248,4 +316,9 @@ async def list_v2_bindings_for_layer(layer_id: int) -> list[Dict[str, Any]]:
         """,
         (layer_id,),
     )
-    return [_binding_response(dict(row)) for row in rows]
+    result = []
+    for row in rows:
+        data = dict(row)
+        data["actions"] = await list_binding_action_steps(int(data["id"]))
+        result.append(_binding_response(data))
+    return result

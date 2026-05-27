@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS actions (
   type TEXT NOT NULL DEFAULT 'command',
   label TEXT NOT NULL DEFAULT '',
   command TEXT,
+  duration_ms INTEGER,
   args_json TEXT,
   working_directory TEXT,
   environment_json TEXT,
@@ -143,9 +144,21 @@ CREATE TABLE IF NOT EXISTS bindings_v2 (
   display_label TEXT NOT NULL DEFAULT '',
   display_color TEXT,
   display_emoji TEXT NOT NULL DEFAULT '',
+  display_icon TEXT NOT NULL DEFAULT '',
   legacy_binding_id INTEGER REFERENCES bindings(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS binding_actions (
+  id INTEGER PRIMARY KEY,
+  binding_id INTEGER NOT NULL REFERENCES bindings_v2(id) ON DELETE CASCADE,
+  action_id INTEGER NOT NULL REFERENCES actions(id) ON DELETE CASCADE,
+  execution_order INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(binding_id, action_id)
 );
 
 CREATE TABLE IF NOT EXISTS runs (

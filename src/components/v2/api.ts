@@ -54,8 +54,15 @@ export type BackendTrigger = {
 
 export type BackendAction = {
   id?: number | string | null;
+  action_id?: number | string | null;
+  binding_action_id?: number | string | null;
+  binding_id?: number | string | null;
+  execution_order?: number | null;
+  enabled?: boolean | number | null;
+  type?: "command" | "delay" | string | null;
   label?: string | null;
   command?: string | null;
+  duration_ms?: number | null;
   working_directory?: string | null;
   execution_mode?: string | null;
   timeout_ms?: number | null;
@@ -78,6 +85,7 @@ export type BackendBinding = {
   display_icon?: string | null;
   trigger?: BackendTrigger | null;
   action?: BackendAction | null;
+  actions?: BackendAction[] | null;
 };
 
 export type BackendBindingPatch = {
@@ -138,6 +146,28 @@ export type BackendActionPreviewPayload = {
   type: "command";
   label?: string;
   command: string;
+  working_directory?: string;
+  execution_mode?: "argv" | "detached";
+  timeout_ms?: number;
+};
+
+export type BackendBindingActionCreatePayload = {
+  type: "delay" | "command";
+  label?: string;
+  command?: string;
+  duration_ms?: number;
+  working_directory?: string;
+  timeout_ms?: number;
+  enabled?: 0 | 1;
+  execution_mode?: "argv" | "detached";
+};
+
+export type BackendBindingActionPatchPayload = {
+  execution_order?: number;
+  enabled?: 0 | 1;
+  label?: string;
+  command?: string;
+  duration_ms?: number;
   working_directory?: string;
   execution_mode?: "argv" | "detached";
   timeout_ms?: number;
@@ -316,4 +346,19 @@ export const v2Api = {
   testAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/test`),
   testActionPreview: (payload: BackendActionPreviewPayload) =>
     apiPost<BackendActionRunResult>("/api/actions/preview/test", payload),
+  createBindingAction: (bindingId: string, payload: BackendBindingActionCreatePayload) =>
+    apiPost<BackendAction>(`/api/bindings/${bindingId}/actions`, payload),
+  updateBindingAction: (bindingId: string, bindingActionId: string, payload: BackendBindingActionPatchPayload) =>
+    apiPatch<BackendAction>(`/api/bindings/${bindingId}/actions/${bindingActionId}`, payload),
+  deleteBindingAction: (bindingId: string, bindingActionId: string) =>
+    apiDelete<{ ok: boolean; deleted_binding_action_id: number | string; deleted_action_id?: number | string | null }>(
+      `/api/bindings/${bindingId}/actions/${bindingActionId}`,
+    ),
+  reorderBindingActions: (bindingId: string, orderedIds: string[]) =>
+    apiPost<{ ok: boolean; actions: BackendAction[] }>(
+      `/api/bindings/${bindingId}/actions/reorder`,
+      orderedIds.map((id) => Number(id)),
+    ),
+  reorderActionGroup: (orderedIds: string[]) =>
+    apiPost<{ ok: boolean }>("/api/action-groups/reorder", orderedIds.map((id) => Number(id))),
 };

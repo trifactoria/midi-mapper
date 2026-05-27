@@ -4,6 +4,7 @@ import type {
   BindingKind,
   RunStatus,
   V2BindingSummary,
+  V2ActionStep,
   V2LayerSummary,
   V2ProfileSummary,
   V2RunSummary,
@@ -61,6 +62,28 @@ function triggerCondition(trigger?: BackendTrigger | null): string {
   if (typeof trigger.velocity_min === "number") return `Vel >= ${trigger.velocity_min}`;
   if (typeof trigger.velocity_max === "number") return `Vel <= ${trigger.velocity_max}`;
   return "Vel 0-127";
+}
+
+function mapActionStep(action: NonNullable<BackendBinding["actions"]>[number], fallbackIndex: number): V2ActionStep {
+  const type = action.type ?? "command";
+  const durationMs = action.duration_ms ?? undefined;
+  const command = action.command?.trim() || "";
+  return {
+    bindingActionId: String(action.binding_action_id ?? action.action_id ?? action.id ?? fallbackIndex),
+    bindingId: String(action.binding_id ?? ""),
+    actionId: String(action.action_id ?? action.id ?? fallbackIndex),
+    executionOrder: action.execution_order ?? fallbackIndex,
+    enabled: asBool(action.enabled ?? 1),
+    type,
+    label:
+      action.label?.trim() ||
+      (type === "delay" ? `Wait ${durationMs ?? 0}ms` : command || "Command"),
+    command: command || undefined,
+    durationMs,
+    workingDirectory: action.working_directory?.trim() || undefined,
+    executionMode: action.execution_mode ?? undefined,
+    timeoutMs: action.timeout_ms ?? undefined,
+  };
 }
 
 function parseTriggerSnapshot(value: string | null | undefined): BackendTrigger | null {
@@ -122,6 +145,13 @@ export function mapBindings(rows: BackendBinding[], layers: V2LayerSummary[]): V
     const triggerText = triggerLabel(binding.trigger);
     const condition = triggerCondition(binding.trigger);
 
+    const actions = (binding.actions?.length
+      ? binding.actions
+      : binding.action
+        ? [{ ...binding.action, action_id: binding.action.id, binding_id: binding.id, execution_order: 0, enabled: 1 }]
+        : []
+    ).map(mapActionStep);
+
     return {
       id: String(binding.id),
       kind,
@@ -152,6 +182,7 @@ export function mapBindings(rows: BackendBinding[], layers: V2LayerSummary[]): V
       displayColor: binding.display_color?.trim() || undefined,
       displayLabel: binding.display_label?.trim() || undefined,
       icon: binding.display_icon?.trim() || undefined,
+      actions,
       label,
       trigger: condition ? `${triggerText} · ${condition}` : triggerText,
       action: label,
@@ -210,12 +241,13 @@ export function mapStats(
   fallback: AppStats,
 ): AppStats {
   const connectedDevice = devices.find((device) => asBool(device.connected)) ?? devices[0];
+  const actionCount = bindings.reduce((total, binding) => total + Math.max(1, binding.actions?.length ?? 0), 0);
   return {
     ...fallback,
     midiInput: connectedDevice?.port_name || connectedDevice?.name || fallback.midiInput,
     profiles: profiles.length,
     layers: layers.length,
     bindings: bindings.length,
-    actions: bindings.length,
+    actions: actionCount,
   };
 }

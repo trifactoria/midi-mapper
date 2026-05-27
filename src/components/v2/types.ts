@@ -52,10 +52,26 @@ export type V2BindingSummary = {
   displayColor?: string;
   displayLabel?: string;
   icon?: string;
+  actions?: V2ActionStep[];
   /** Legacy fields kept for back-compat with other panels */
   label?: string;
   trigger?: string;
   action?: string;
+};
+
+export type V2ActionStep = {
+  bindingActionId: string;
+  bindingId: string;
+  actionId: string;
+  executionOrder: number;
+  enabled: boolean;
+  type: "command" | "delay" | string;
+  label: string;
+  command?: string;
+  durationMs?: number;
+  workingDirectory?: string;
+  executionMode?: string;
+  timeoutMs?: number;
 };
 
 export type RunStatus = "success" | "failed" | "error" | "timeout";
@@ -150,6 +166,14 @@ export type V2MidiEventPayload = {
     stderr?: string;
     stderr_preview?: string;
   } | null;
+  action_sequence?: Array<{
+    ok?: boolean;
+    action_id?: number | string;
+    run_id?: number | string;
+    command?: string;
+    summary?: string;
+    duration_ms?: number;
+  }>;
   execution_status?: string | null;
   binding_match?: unknown;
   v2_binding_match?: unknown;

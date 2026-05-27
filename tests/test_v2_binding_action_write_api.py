@@ -331,6 +331,109 @@ def test_action_test_uses_existing_safe_executor(client, monkeypatch):
     })
 
 
+def test_add_delay_step_and_reorder_persists(client):
+    _, layer = create_profile_layer(client)
+    binding = create_note_binding(client, layer["id"]).json()
+
+    delay = client.post(
+        f"/api/bindings/{binding['id']}/actions",
+        json={"type": "delay", "label": "Pause", "duration_ms": 3000},
+    ).json()
+
+    steps = client.get(f"/api/bindings/{binding['id']}/actions").json()
+    assert [step["type"] for step in steps] == ["command", "delay"]
+    assert steps[1]["duration_ms"] == 3000
+
+    response = client.post(
+        f"/api/bindings/{binding['id']}/actions/reorder",
+        json=[delay["binding_action_id"], steps[0]["binding_action_id"]],
+    )
+
+    assert response.status_code == 200
+    reordered = client.get(f"/api/bindings/{binding['id']}/actions").json()
+    assert [step["type"] for step in reordered] == ["delay", "command"]
+    assert [step["execution_order"] for step in reordered] == [0, 1]
+
+
+def test_add_edit_delete_command_and_delay_steps(client):
+    _, layer = create_profile_layer(client)
+    binding = create_note_binding(client, layer["id"]).json()
+
+    command = client.post(
+        f"/api/bindings/{binding['id']}/actions",
+        json={
+            "type": "command",
+            "label": "Browser",
+            "command": "firefox https://skillkraftz.com",
+            "working_directory": "/tmp",
+            "execution_mode": "detached",
+            "timeout_ms": 2000,
+        },
+    ).json()
+    updated_command = client.patch(
+        f"/api/bindings/{binding['id']}/actions/{command['binding_action_id']}",
+        json={"command": "firefox https://example.com", "label": "Example"},
+    ).json()
+    assert updated_command["command"] == "firefox https://example.com"
+    assert updated_command["label"] == "Example"
+
+    delay = client.post(
+        f"/api/bindings/{binding['id']}/actions",
+        json={"type": "delay", "duration_ms": 1000},
+    ).json()
+    updated_delay = client.patch(
+        f"/api/bindings/{binding['id']}/actions/{delay['binding_action_id']}",
+        json={"duration_ms": 2500},
+    ).json()
+    assert updated_delay["duration_ms"] == 2500
+
+    response = client.delete(f"/api/bindings/{binding['id']}/actions/{delay['binding_action_id']}")
+    assert response.status_code == 200
+    assert all(step["binding_action_id"] != delay["binding_action_id"] for step in client.get(f"/api/bindings/{binding['id']}/actions").json())
+
+
+def test_reorder_across_same_trigger_bindings_persists(client):
+    _, layer = create_profile_layer(client)
+    first = create_note_binding(client, layer["id"], action={"type": "command", "label": "First", "command": "echo first"}).json()
+    second = create_note_binding(client, layer["id"], action={"type": "command", "label": "Second", "command": "echo second"}).json()
+    first_step = client.get(f"/api/bindings/{first['id']}/actions").json()[0]
+    second_step = client.get(f"/api/bindings/{second['id']}/actions").json()[0]
+
+    response = client.post(
+        "/api/action-groups/reorder",
+        json=[second_step["binding_action_id"], first_step["binding_action_id"]],
+    )
+
+    assert response.status_code == 200
+    assert client.get(f"/api/bindings/{second['id']}/actions").json()[0]["execution_order"] == 0
+    assert client.get(f"/api/bindings/{first['id']}/actions").json()[0]["execution_order"] == 1
+
+
+def test_toggle_action_step_persists(client):
+    _, layer = create_profile_layer(client)
+    binding = create_note_binding(client, layer["id"]).json()
+    step = client.get(f"/api/bindings/{binding['id']}/actions").json()[0]
+
+    response = client.patch(
+        f"/api/bindings/{binding['id']}/actions/{step['binding_action_id']}",
+        json={"enabled": 0},
+    )
+
+    assert response.status_code == 200
+    assert client.get(f"/api/bindings/{binding['id']}/actions").json()[0]["enabled"] == 0
+
+
+def test_delete_last_step_leaves_empty_sequence(client):
+    _, layer = create_profile_layer(client)
+    binding = create_note_binding(client, layer["id"]).json()
+    step = client.get(f"/api/bindings/{binding['id']}/actions").json()[0]
+
+    response = client.delete(f"/api/bindings/{binding['id']}/actions/{step['binding_action_id']}")
+
+    assert response.status_code == 200
+    assert client.get(f"/api/layers/{layer['id']}/bindings").json()[0]["actions"] == []
+
+
 def test_unsupported_action_type_is_rejected(client, app_module):
     _, layer = create_profile_layer(client)
 

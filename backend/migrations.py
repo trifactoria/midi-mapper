@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS actions (
   type TEXT NOT NULL DEFAULT 'command',
   label TEXT NOT NULL DEFAULT '',
   command TEXT,
+  duration_ms INTEGER,
   args_json TEXT,
   working_directory TEXT,
   environment_json TEXT,
@@ -102,6 +103,17 @@ CREATE TABLE IF NOT EXISTS bindings_v2 (
   legacy_binding_id INTEGER REFERENCES bindings(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS binding_actions (
+  id INTEGER PRIMARY KEY,
+  binding_id INTEGER NOT NULL REFERENCES bindings_v2(id) ON DELETE CASCADE,
+  action_id INTEGER NOT NULL REFERENCES actions(id) ON DELETE CASCADE,
+  execution_order INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(binding_id, action_id)
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -191,3 +203,33 @@ async def apply_migrations() -> None:
         if "display_icon" not in bv2_cols:
             await db.execute("ALTER TABLE bindings_v2 ADD COLUMN display_icon TEXT NOT NULL DEFAULT ''")
             await db.commit()
+
+        cursor = await db.execute("PRAGMA table_info(actions)")
+        action_cols = [col[1] for col in await cursor.fetchall()]
+        if "duration_ms" not in action_cols:
+            await db.execute("ALTER TABLE actions ADD COLUMN duration_ms INTEGER")
+            await db.commit()
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS binding_actions (
+              id INTEGER PRIMARY KEY,
+              binding_id INTEGER NOT NULL REFERENCES bindings_v2(id) ON DELETE CASCADE,
+              action_id INTEGER NOT NULL REFERENCES actions(id) ON DELETE CASCADE,
+              execution_order INTEGER NOT NULL DEFAULT 0,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(binding_id, action_id)
+            )
+            """
+        )
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO binding_actions(binding_id, action_id, execution_order, enabled)
+            SELECT id, action_id, 0, 1
+            FROM bindings_v2
+            WHERE action_id IS NOT NULL
+            """
+        )
+        await db.commit()

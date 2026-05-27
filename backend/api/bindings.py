@@ -3,9 +3,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 
 from backend.api.v2_bindings import (
+    V2ActionIn,
     V2BindingPatchIn,
     V2TriggerIn,
     get_v2_binding,
+    validate_action,
     validate_trigger,
 )
 from backend.actions.executor import safe_execute_command
@@ -223,13 +225,24 @@ async def update_v2_binding(binding_id: int, payload: V2BindingPatchIn) -> Dict[
     action_updates = []
     action_params: list[Any] = []
     if payload.action is not None:
-        if payload.action.type is not None and payload.action.type != "command":
-            raise HTTPException(status_code=400, detail="Only command actions are supported")
-        if payload.action.command is not None and not payload.action.command.strip():
-            raise HTTPException(status_code=400, detail="Action command is required")
+        merged_action = V2ActionIn(
+            type=payload.action.type if payload.action.type is not None else existing["action"]["type"],
+            label=payload.action.label if payload.action.label is not None else existing["action"]["label"],
+            command=payload.action.command if payload.action.command is not None else existing["action"]["command"] or "",
+            duration_ms=payload.action.duration_ms if payload.action.duration_ms is not None else existing["action"].get("duration_ms"),
+            args_json=payload.action.args_json if payload.action.args_json is not None else existing["action"]["args_json"],
+            working_directory=payload.action.working_directory if payload.action.working_directory is not None else existing["action"]["working_directory"],
+            execution_mode=payload.action.execution_mode if payload.action.execution_mode is not None else existing["action"]["execution_mode"],
+            timeout_ms=payload.action.timeout_ms if payload.action.timeout_ms is not None else existing["action"]["timeout_ms"],
+            notify_text=payload.action.notify_text if payload.action.notify_text is not None else existing["action"]["notify_text"],
+            notify_emoji=payload.action.notify_emoji if payload.action.notify_emoji is not None else existing["action"]["notify_emoji"],
+        )
+        validate_action(merged_action)
         for field_name in (
+            "type",
             "label",
             "command",
+            "duration_ms",
             "args_json",
             "working_directory",
             "execution_mode",
@@ -294,12 +307,12 @@ async def duplicate_v2_binding(binding_id: int) -> Dict[str, Any]:
             """
             INSERT INTO actions(
               type, label, command, args_json, working_directory,
-              environment_json, execution_mode, timeout_ms,
+              duration_ms, environment_json, execution_mode, timeout_ms,
               cooldown_ms, allow_concurrent, notify_text, notify_emoji
             )
             SELECT
               type, label, command, args_json, working_directory,
-              environment_json, execution_mode, timeout_ms,
+              duration_ms, environment_json, execution_mode, timeout_ms,
               cooldown_ms, allow_concurrent, notify_text, notify_emoji
             FROM actions WHERE id = ?
             """,
@@ -332,6 +345,13 @@ async def duplicate_v2_binding(binding_id: int) -> Dict[str, Any]:
             ),
         )
         new_binding_id = cur.lastrowid
+        await db.execute(
+            """
+            INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled)
+            VALUES (?, ?, 0, 1)
+            """,
+            (new_binding_id, new_action_id),
+        )
         await db.commit()
 
     return await get_v2_binding(new_binding_id)
@@ -350,6 +370,12 @@ async def delete_v2_binding(binding_id: int) -> Dict[str, Any]:
         await db.execute("UPDATE runs SET binding_id = NULL WHERE binding_id = ?", (binding_id,))
         # Migration tracking rows have a NOT NULL FK — remove them before the binding.
         await db.execute("DELETE FROM legacy_binding_migrations WHERE binding_v2_id = ?", (binding_id,))
+        action_link_cur = await db.execute(
+            "SELECT action_id FROM binding_actions WHERE binding_id = ?",
+            (binding_id,),
+        )
+        linked_action_ids = {r["action_id"] for r in await action_link_cur.fetchall()}
+        linked_action_ids.add(action_id)
         await db.execute("DELETE FROM bindings_v2 WHERE id = ?", (binding_id,))
 
         # Only delete trigger if nothing else references it.
@@ -368,17 +394,24 @@ async def delete_v2_binding(binding_id: int) -> Dict[str, Any]:
 
         # Only delete action if no bindings and no runs still reference it.
         # runs.action_id has no ON DELETE clause and would block deletion.
-        action_binding_cur = await db.execute(
-            "SELECT COUNT(*) AS count FROM bindings_v2 WHERE action_id = ?", (action_id,)
-        )
-        action_run_cur = await db.execute(
-            "SELECT COUNT(*) AS count FROM runs WHERE action_id = ?", (action_id,)
-        )
-        action_binding_refs = (await action_binding_cur.fetchone())["count"]
-        action_run_refs = (await action_run_cur.fetchone())["count"]
-        if action_binding_refs == 0 and action_run_refs == 0:
-            await db.execute("DELETE FROM actions WHERE id = ?", (action_id,))
-            deleted_action_id = action_id
+        for linked_action_id in linked_action_ids:
+            action_binding_cur = await db.execute(
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM bindings_v2 WHERE action_id = ?) +
+                  (SELECT COUNT(*) FROM binding_actions WHERE action_id = ?) AS count
+                """,
+                (linked_action_id, linked_action_id),
+            )
+            action_run_cur = await db.execute(
+                "SELECT COUNT(*) AS count FROM runs WHERE action_id = ?", (linked_action_id,)
+            )
+            action_binding_refs = (await action_binding_cur.fetchone())["count"]
+            action_run_refs = (await action_run_cur.fetchone())["count"]
+            if action_binding_refs == 0 and action_run_refs == 0:
+                await db.execute("DELETE FROM actions WHERE id = ?", (linked_action_id,))
+                if linked_action_id == action_id:
+                    deleted_action_id = action_id
 
         await db.commit()
 
