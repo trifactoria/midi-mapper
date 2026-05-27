@@ -24,18 +24,47 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
         body > .min-h-screen > main input,
         body > .min-h-screen > main select,
         body > .min-h-screen > main textarea {
+          box-sizing: border-box;
+          min-height: 32px;
           padding: 6px 9px;
           border-radius: 6px;
           font-size: 12px;
+          line-height: 18px;
           border-width: 1px;
-          border-color: rgba(255, 255, 255, 0.10);
-          background: rgba(255, 255, 255, 0.04);
+          border-color: #3f4751;
+          background-color: #171b20;
+          color: #ededed;
+        }
+        body > .min-h-screen > main input,
+        body > .min-h-screen > main select {
+          height: 32px;
+        }
+        body > .min-h-screen > main select {
+          appearance: none;
+          -webkit-appearance: none;
+          color-scheme: dark;
+          padding-right: 28px;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23aeb8c2' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+          background-position: right 9px center;
+          background-repeat: no-repeat;
+          background-size: 12px;
+        }
+        body > .min-h-screen > main select option,
+        body > .min-h-screen > main select optgroup {
+          background-color: #171b20;
+          color: #ededed;
+        }
+        body > .min-h-screen > main input:hover,
+        body > .min-h-screen > main select:hover,
+        body > .min-h-screen > main textarea:hover {
+          border-color: #59636e;
+          background-color: #1f252c;
         }
         body > .min-h-screen > main input:focus,
         body > .min-h-screen > main select:focus,
         body > .min-h-screen > main textarea:focus {
           border-color: rgba(0, 212, 255, 0.55);
-          background: rgba(0, 212, 255, 0.06);
+          background-color: #20262d;
           box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
         }
         body > .min-h-screen > main button:hover:not(:disabled),

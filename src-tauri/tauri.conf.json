@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MIDI Mapper",
+  "version": "0.1.0",
+  "identifier": "com.trifactoria.midimapper",
+  "build": {
+    "frontendDist": "frontend-dist",
+    "devUrl": "http://localhost:3000/v2",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "MIDI Mapper",
+        "width": 1760,
+        "height": 990,
+        "minWidth": 1280,
+        "minHeight": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "category": "Utility",
+    "icon": ["icons/icon.png"],
+    "shortDescription": "Local MIDI mapping desktop shell"
+  }
+}
