@@ -25,6 +25,7 @@ RUN_SELECT = """
       stdout_preview,
       stderr_preview,
       error_message,
+      session_id,
       created_at
     FROM runs
 """

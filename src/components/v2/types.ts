@@ -65,13 +65,16 @@ export type V2ActionStep = {
   actionId: string;
   executionOrder: number;
   enabled: boolean;
-  type: "command" | "delay" | string;
+  type: "command" | "delay" | "notification" | "open_url" | "open_app" | "hotkey" | string;
   label: string;
   command?: string;
   durationMs?: number;
   workingDirectory?: string;
   executionMode?: string;
   timeoutMs?: number;
+  title?: string;
+  message?: string;
+  urgency?: string;
 };
 
 export type RunStatus = "success" | "failed" | "error" | "timeout";
@@ -90,9 +93,32 @@ export type V2RunSummary = {
   stderrPreview?: string;
   errorMessage?: string;
   startedAt?: string;
+  sessionId?: string;
   /** Legacy fields */
   action?: string;
   time?: string;
+};
+
+export type SessionStatus = RunStatus | "partial";
+
+export type V2ExecutionSession = {
+  sessionId: string;
+  triggerLabel: string;
+  triggerCondition: string;
+  startedAt?: string;
+  totalDurationMs: number;
+  status: SessionStatus;
+  stepCount: number;
+  failureCount: number;
+  steps: V2RunSummary[];
+};
+
+export type V2Macro = {
+  id: string;
+  name: string;
+  description: string;
+  stepCount: number;
+  createdAt?: string;
 };
 
 export type MidiMonitorEvent = {

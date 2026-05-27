@@ -71,6 +71,7 @@ export function V2Shell() {
     layers,
     bindings,
     runs,
+    macros,
     automation,
     appStats,
     monitorEvents,
@@ -115,6 +116,10 @@ export function V2Shell() {
     deleteActionStep,
     moveActionStep,
     toggleActionStep,
+    saveMacro,
+    applyMacro,
+    deleteMacro,
+    cloneBinding,
   } = useV2ReadData();
   const midiUnavailable = midiStatus?.available === false || midiStatus?.degraded === true;
   const midiLabel = selectedInputPort ?? (midiUnavailable ? midiStatus?.message ?? "MIDI unavailable" : appStats.midiInput);
@@ -233,12 +238,23 @@ export function V2Shell() {
               {activeTab === "actions" && (
                 <ActionsPanel
                   bindings={bindings}
+                  macros={macros}
                   onAddDelayStep={(bindingId) => void addDelayStep(bindingId, 3000)}
                   onAddCommandStep={(bindingId, payload) => void addCommandStep(bindingId, payload)}
                   onUpdateStep={(bindingId, bindingActionId, patch) => void updateActionStep(bindingId, bindingActionId, patch)}
                   onDeleteStep={(bindingId, bindingActionId) => void deleteActionStep(bindingId, bindingActionId)}
                   onMoveStep={(bindingId, bindingActionId, direction) => void moveActionStep(bindingId, bindingActionId, direction)}
                   onToggleStep={(bindingId, bindingActionId, enabled) => void toggleActionStep(bindingId, bindingActionId, enabled)}
+                  onSaveMacro={(bindingId, name) => saveMacro(bindingId, name)}
+                  onApplyMacro={(macroId, bindingId, replaceExisting) => applyMacro(macroId, bindingId, replaceExisting)}
+                  onDeleteMacro={(macroId) => deleteMacro(macroId)}
+                  onCloneBinding={(bindingId, targetNote, targetController, targetChannel) =>
+                    cloneBinding(bindingId, {
+                      target_note: targetNote ?? undefined,
+                      target_controller: targetController ?? undefined,
+                      target_channel: targetChannel ?? undefined,
+                    })
+                  }
                 />
               )}
               {activeTab === "history" && <RunHistoryPanel runs={runs} onClearRuns={clearRuns} />}

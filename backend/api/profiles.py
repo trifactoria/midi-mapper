@@ -229,9 +229,12 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                   cooldown_ms,
                   allow_concurrent,
                   notify_text,
-                  notify_emoji
+                  notify_emoji,
+                  title,
+                  message,
+                  urgency
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     action.get("type", "command"),
@@ -247,6 +250,9 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                     action.get("allow_concurrent", 0),
                     action.get("notify_text", ""),
                     action.get("notify_emoji", ""),
+                    action.get("title"),
+                    action.get("message"),
+                    action.get("urgency"),
                 ),
             )
             action_ids[action_key] = action_cur.lastrowid

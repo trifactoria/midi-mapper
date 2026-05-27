@@ -61,6 +61,7 @@ type ActionPreset = {
   args: string;
   hint?: string;
   execution_mode?: "argv" | "detached";
+  action_type?: "command" | "notification" | "open_url" | "open_app" | "hotkey";
 };
 
 const PRESET_GROUPS: { group: string; items: ActionPreset[] }[] = [
@@ -72,10 +73,19 @@ const PRESET_GROUPS: { group: string; items: ActionPreset[] }[] = [
     ],
   },
   {
-    group: "Open",
+    group: "Desktop",
     items: [
-      { id: "open_url", label: "Open URL", command: "xdg-open", args: "https://example.com", hint: "Requires xdg-open", execution_mode: "detached" },
-      { id: "open_app", label: "Open App", command: "firefox", args: "", hint: "Edit command to your app binary name", execution_mode: "detached" },
+      { id: "notify", label: "Desktop Notification", command: "Recording starting", args: "Scene is live", hint: "Uses notify-send — edit title and body", action_type: "notification" },
+      { id: "open_url_native", label: "Open URL", command: "https://example.com", args: "", hint: "Requires xdg-open", action_type: "open_url" },
+      { id: "open_app_native", label: "Open App", command: "firefox", args: "", hint: "Edit with your app name", action_type: "open_app" },
+      { id: "hotkey_native", label: "Hotkey / Shortcut", command: "", args: "", hint: "Hotkeys are sent with xdotool and depend on your desktop shortcuts. Test carefully.", action_type: "hotkey" },
+    ],
+  },
+  {
+    group: "Open (command)",
+    items: [
+      { id: "open_url", label: "Open URL (cmd)", command: "xdg-open", args: "https://example.com", hint: "Requires xdg-open", execution_mode: "detached" },
+      { id: "open_app", label: "Open App (cmd)", command: "firefox", args: "", hint: "Edit command to your app binary name", execution_mode: "detached" },
     ],
   },
   {
@@ -350,10 +360,24 @@ export function QuickBindPanel({
   }
 
   const activePreset = ALL_PRESETS.find((p) => p.id === presetId);
+  const nativeType = activePreset?.action_type;
   const commandLine = useMemo(() => [command.trim(), args.trim()].filter(Boolean).join(" "), [args, command]);
   const effectiveLabel = presetId !== "custom" && activePreset
     ? activePreset.label
     : (command.trim() || commandLine);
+
+  // Type-aware field metadata
+  const commandFieldLabel = nativeType === "notification" ? "Title"
+    : nativeType === "open_url" ? "URL"
+    : nativeType === "hotkey" ? "Shortcut"
+    : "Command";
+  const commandFieldPlaceholder = nativeType === "hotkey" ? "ctrl+a, alt+f2, media keys, etc."
+    : nativeType === "open_url" ? "https://example.com"
+    : nativeType === "notification" ? "Notification title"
+    : "";
+  const argsFieldLabel = nativeType === "notification" ? "Message (body)" : "Arguments";
+  const showArgsField = nativeType !== "open_url" && nativeType !== "hotkey";
+  const showWorkingDirField = !nativeType || nativeType === "open_app";
 
   async function createBinding() {
     setRunResult(null);
@@ -362,11 +386,12 @@ export function QuickBindPanel({
       return;
     }
     if (!command.trim()) {
-      setMessage("Command is required");
+      setMessage(`${commandFieldLabel} is required`);
       return;
     }
     const validationError = validateCreatePayload(
-      eventType, channel, note, controller, velocityMin, velocityMax, valueMin, valueMax, commandLine,
+      eventType, channel, note, controller, velocityMin, velocityMax, valueMin, valueMax,
+      nativeType ? command.trim() : commandLine,
     );
     if (validationError) {
       setMessage(validationError);
@@ -393,15 +418,25 @@ export function QuickBindPanel({
           };
 
     try {
+      const nativeType = activePreset?.action_type;
+      const actionPayload = nativeType === "notification"
+        ? { type: "notification" as const, label: effectiveLabel, title: command.trim(), message: args.trim() || undefined }
+        : nativeType === "open_url"
+        ? { type: "open_url" as const, label: effectiveLabel, command: command.trim() }
+        : nativeType === "open_app"
+        ? { type: "open_app" as const, label: effectiveLabel, command: commandLine }
+        : nativeType === "hotkey"
+        ? { type: "hotkey" as const, label: effectiveLabel, command: command.trim() }
+        : {
+            type: "command" as const,
+            label: effectiveLabel,
+            command: commandLine,
+            working_directory: workingDirectory.trim() || undefined,
+            execution_mode: executionMode,
+          };
       const created = await onCreateBinding({
         trigger,
-        action: {
-          type: "command",
-          label: effectiveLabel,
-          command: commandLine,
-          working_directory: workingDirectory.trim() || undefined,
-          execution_mode: executionMode,
-        },
+        action: actionPayload,
         enabled: enabled ? 1 : 0,
         require_armed: requireArmed ? 1 : 0,
         cooldown_ms: Number(cooldownMs) || 200,
@@ -421,8 +456,20 @@ export function QuickBindPanel({
     setMessage(null);
     setRunResult(null);
     if (!command.trim()) {
-      setMessage("Command is required");
+      setRunResult({ ok: false, error: `${commandFieldLabel} is required` });
       return null;
+    }
+    if (nativeType === "notification") {
+      return { type: "notification", label: effectiveLabel, title: command.trim(), message: args.trim() || undefined };
+    }
+    if (nativeType === "open_url") {
+      return { type: "open_url", label: effectiveLabel, command: command.trim() };
+    }
+    if (nativeType === "open_app") {
+      return { type: "open_app", label: effectiveLabel, command: commandLine };
+    }
+    if (nativeType === "hotkey") {
+      return { type: "hotkey", label: effectiveLabel, command: command.trim() };
     }
     return {
       type: "command",
@@ -433,14 +480,22 @@ export function QuickBindPanel({
     };
   }
 
+  function _previewSummary(payload: BackendActionPreviewPayload): string {
+    if (payload.type === "notification") return `notify-send "${payload.title || ""}" "${payload.message || ""}"`;
+    if (payload.type === "open_url") return `xdg-open ${payload.command || ""}`;
+    if (payload.type === "open_app") return payload.command || "";
+    if (payload.type === "hotkey") return `xdotool key ${payload.command || ""}`;
+    return payload.command || "";
+  }
+
   function previewCommand() {
     const payload = actionPreviewPayload();
     if (!payload) return;
     setRunResult({
       ok: true,
-      command: payload.command,
+      command: payload.type === "command" ? payload.command : undefined,
       label: payload.label,
-      summary: payload.command,
+      summary: _previewSummary(payload),
       would_execute: false,
     });
   }
@@ -591,31 +646,36 @@ export function QuickBindPanel({
             </select>
           </label>
           <label className="block">
-            <FieldLabel>Command</FieldLabel>
+            <FieldLabel>{commandFieldLabel}</FieldLabel>
             <input
               className="w-full font-mono !text-[11.5px]"
               value={command}
-              onChange={(event) => { setCommand(event.target.value); setPresetId("custom"); setExecutionMode("argv"); }}
+              placeholder={commandFieldPlaceholder}
+              onChange={(event) => { setCommand(event.target.value); }}
             />
           </label>
         </div>
 
-        <label className="mt-1.5 block">
-          <FieldLabel optional>Arguments</FieldLabel>
-          <input
-            className="w-full font-mono !text-[11.5px]"
-            value={args}
-            onChange={(event) => setArgs(event.target.value)}
-          />
-        </label>
+        {showArgsField && (
+          <label className="mt-1.5 block">
+            <FieldLabel optional>{argsFieldLabel}</FieldLabel>
+            <input
+              className="w-full font-mono !text-[11.5px]"
+              value={args}
+              onChange={(event) => setArgs(event.target.value)}
+            />
+          </label>
+        )}
         {activePreset?.hint && (
           <p className="mt-0.5 text-[10px] text-amber-200/50">{activePreset.hint}</p>
         )}
 
-        <label className="mt-1.5 block">
-          <FieldLabel optional>Working Directory</FieldLabel>
-          <input className="w-full font-mono !text-[11.5px]" value={workingDirectory} onChange={(event) => setWorkingDirectory(event.target.value)} />
-        </label>
+        {showWorkingDirField && (
+          <label className="mt-1.5 block">
+            <FieldLabel optional>Working Directory</FieldLabel>
+            <input className="w-full font-mono !text-[11.5px]" value={workingDirectory} onChange={(event) => setWorkingDirectory(event.target.value)} />
+          </label>
+        )}
 
         <div className="mt-2 flex gap-1.5">
           <button

@@ -116,14 +116,17 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
               timeout_ms,
               cooldown_ms,
               notify_text,
-              notify_emoji
+              notify_emoji,
+              title,
+              message,
+              urgency
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.action.type,
                 payload.action.label,
-                payload.action.command if payload.action.type == "command" else None,
+                payload.action.command if payload.action.type in ("command", "open_url", "open_app", "hotkey") else None,
                 payload.action.duration_ms,
                 payload.action.args_json,
                 payload.action.working_directory,
@@ -132,6 +135,9 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
                 payload.cooldown_ms,
                 payload.action.notify_text,
                 payload.action.notify_emoji,
+                payload.action.title if payload.action.type == "notification" else None,
+                payload.action.message if payload.action.type == "notification" else None,
+                payload.action.urgency if payload.action.type == "notification" else None,
             ),
         )
         action_id = action_cursor.lastrowid

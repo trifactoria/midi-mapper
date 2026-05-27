@@ -1,12 +1,14 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from backend.api.v2_bindings import (
     V2ActionIn,
     V2BindingPatchIn,
     V2TriggerIn,
     get_v2_binding,
+    list_binding_action_steps,
     validate_action,
     validate_trigger,
 )
@@ -236,6 +238,9 @@ async def update_v2_binding(binding_id: int, payload: V2BindingPatchIn) -> Dict[
             timeout_ms=payload.action.timeout_ms if payload.action.timeout_ms is not None else existing["action"]["timeout_ms"],
             notify_text=payload.action.notify_text if payload.action.notify_text is not None else existing["action"]["notify_text"],
             notify_emoji=payload.action.notify_emoji if payload.action.notify_emoji is not None else existing["action"]["notify_emoji"],
+            title=payload.action.title if payload.action.title is not None else existing["action"].get("title"),
+            message=payload.action.message if payload.action.message is not None else existing["action"].get("message"),
+            urgency=payload.action.urgency if payload.action.urgency is not None else existing["action"].get("urgency"),
         )
         validate_action(merged_action)
         for field_name in (
@@ -249,6 +254,9 @@ async def update_v2_binding(binding_id: int, payload: V2BindingPatchIn) -> Dict[
             "timeout_ms",
             "notify_text",
             "notify_emoji",
+            "title",
+            "message",
+            "urgency",
         ):
             value = getattr(payload.action, field_name)
             if value is not None:
@@ -308,12 +316,14 @@ async def duplicate_v2_binding(binding_id: int) -> Dict[str, Any]:
             INSERT INTO actions(
               type, label, command, args_json, working_directory,
               duration_ms, environment_json, execution_mode, timeout_ms,
-              cooldown_ms, allow_concurrent, notify_text, notify_emoji
+              cooldown_ms, allow_concurrent, notify_text, notify_emoji,
+              title, message, urgency
             )
             SELECT
               type, label, command, args_json, working_directory,
               duration_ms, environment_json, execution_mode, timeout_ms,
-              cooldown_ms, allow_concurrent, notify_text, notify_emoji
+              cooldown_ms, allow_concurrent, notify_text, notify_emoji,
+              title, message, urgency
             FROM actions WHERE id = ?
             """,
             (existing["action_id"],),
@@ -352,6 +362,128 @@ async def duplicate_v2_binding(binding_id: int) -> Dict[str, Any]:
             """,
             (new_binding_id, new_action_id),
         )
+        await db.commit()
+
+    return await get_v2_binding(new_binding_id)
+
+
+class BindingCloneIn(BaseModel):
+    target_note: Optional[int] = None
+    target_channel: Optional[int] = None
+    target_controller: Optional[int] = None
+    target_event_type: Optional[str] = None
+    target_layer_id: Optional[int] = None
+    enabled: int = 0
+
+
+@router.post("/api/bindings/{binding_id}/clone")
+async def clone_v2_binding(binding_id: int, payload: BindingCloneIn) -> Dict[str, Any]:
+    """Clone a binding's full action sequence to a new trigger key."""
+    existing = await get_v2_binding(binding_id)
+    current_trigger = existing["trigger"]
+    target_layer_id = payload.target_layer_id or existing["layer_id"]
+
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            INSERT INTO triggers(
+              event_type, channel, note, controller, program,
+              pitch_min, pitch_max, value_min, value_max,
+              velocity_min, velocity_max, device_id, port_name,
+              bank_msb, bank_lsb, program_filter, raw_match_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.target_event_type or current_trigger["event_type"],
+                payload.target_channel if payload.target_channel is not None else current_trigger["channel"],
+                payload.target_note if payload.target_note is not None else current_trigger["note"],
+                payload.target_controller if payload.target_controller is not None else current_trigger["controller"],
+                current_trigger["program"],
+                current_trigger["pitch_min"],
+                current_trigger["pitch_max"],
+                current_trigger["value_min"],
+                current_trigger["value_max"],
+                current_trigger["velocity_min"],
+                current_trigger["velocity_max"],
+                current_trigger["device_id"],
+                current_trigger["port_name"],
+                current_trigger["bank_msb"],
+                current_trigger["bank_lsb"],
+                current_trigger["program_filter"],
+                current_trigger["raw_match_json"],
+            ),
+        )
+        new_trigger_id = cur.lastrowid
+
+        cur = await db.execute(
+            """
+            INSERT INTO actions(
+              type, label, command, args_json, working_directory,
+              duration_ms, environment_json, execution_mode, timeout_ms,
+              cooldown_ms, allow_concurrent, notify_text, notify_emoji
+            )
+            SELECT type, label, command, args_json, working_directory,
+              duration_ms, environment_json, execution_mode, timeout_ms,
+              cooldown_ms, allow_concurrent, notify_text, notify_emoji
+            FROM actions WHERE id = ?
+            """,
+            (existing["action_id"],),
+        )
+        new_action_id = cur.lastrowid
+
+        cur = await db.execute(
+            """
+            INSERT INTO bindings_v2(
+              profile_id, layer_id, trigger_id, action_id,
+              enabled, require_armed, cooldown_ms, notes,
+              display_label, display_color, display_emoji, display_icon
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                existing["profile_id"],
+                target_layer_id,
+                new_trigger_id,
+                new_action_id,
+                payload.enabled,
+                existing["require_armed"],
+                existing["cooldown_ms"],
+                existing["notes"],
+                existing["display_label"],
+                existing["display_color"],
+                existing["display_emoji"],
+                existing["display_icon"],
+            ),
+        )
+        new_binding_id = cur.lastrowid
+
+        # Clone all binding_actions (deep-copy each action row)
+        existing_steps = await list_binding_action_steps(binding_id)
+        for step in existing_steps:
+            cur = await db.execute(
+                """
+                INSERT INTO actions(
+                  type, label, command, args_json, working_directory,
+                  duration_ms, environment_json, execution_mode, timeout_ms,
+                  cooldown_ms, allow_concurrent, notify_text, notify_emoji
+                )
+                SELECT type, label, command, args_json, working_directory,
+                  duration_ms, environment_json, execution_mode, timeout_ms,
+                  cooldown_ms, allow_concurrent, notify_text, notify_emoji
+                FROM actions WHERE id = ?
+                """,
+                (step["action_id"],),
+            )
+            cloned_action_id = cur.lastrowid
+            await db.execute(
+                """
+                INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled)
+                VALUES (?, ?, ?, ?)
+                """,
+                (new_binding_id, cloned_action_id, step["execution_order"], step["enabled"]),
+            )
+
         await db.commit()
 
     return await get_v2_binding(new_binding_id)

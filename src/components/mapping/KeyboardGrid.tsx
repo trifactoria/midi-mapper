@@ -75,7 +75,7 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
           </svg>
           <select
             aria-label="Note range"
-            className="!h-5 !rounded !border-white/10 !bg-transparent !px-0.5 !py-0 !text-[10.5px] text-white/85"
+            className="!h-5 !min-h-0 !rounded !border-0 !bg-transparent !pl-0.5 !pr-4 !py-0 !text-[10.5px] text-white/85"
             value={rangeId}
             onChange={(e) => setRangeId(e.target.value as (typeof NOTE_RANGES)[number]["id"])}
           >

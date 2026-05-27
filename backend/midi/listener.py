@@ -1,10 +1,13 @@
 import asyncio
 import json
+import shlex
 import time
+import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import mido
 
+from backend.actions.executor import execute_hotkey, execute_notification
 from backend.actions.history import record_v2_action_run
 from backend.config import MAX_NOTE, WS_POLL_INTERVAL
 from backend.midi.matcher import (
@@ -235,6 +238,7 @@ async def _execute_v2_match(
     actions = binding.get("actions") or [action]
     cooldown_ms = binding.get("group_cooldown_ms", binding.get("cooldown_ms", 200))
     cooldown_key = binding.get("trigger_group_key") or binding_id
+    session_id = uuid.uuid4().hex
 
     payload.update(
         {
@@ -285,6 +289,33 @@ async def _execute_v2_match(
             )
             result["command"] = command
             action_summary = command
+        elif step_type == "notification":
+            title = (step.get("title") or "").strip() or step.get("label") or "Notification"
+            message = (step.get("message") or "").strip()
+            urgency = step.get("urgency") or None
+            result = await execute_notification(title, message, urgency)
+            action_summary = f"Notify: {title}"
+        elif step_type == "open_url":
+            url = (step.get("command") or "").strip()
+            if url:
+                result = await safe_execute_command(
+                    f"xdg-open {shlex.quote(url)}", execution_mode="detached"
+                )
+            else:
+                result = {"ok": False, "error": "No URL specified", "stdout": "", "stderr": ""}
+            action_summary = f"Open URL: {url}"
+        elif step_type == "open_app":
+            app_cmd = (step.get("command") or "").strip()
+            if app_cmd:
+                result = await safe_execute_command(app_cmd, execution_mode="detached")
+            else:
+                result = {"ok": False, "error": "No app command specified", "stdout": "", "stderr": ""}
+            app_name = app_cmd.split()[0] if app_cmd else "app"
+            action_summary = f"Open App: {app_name}"
+        elif step_type == "hotkey":
+            shortcut = (step.get("command") or "").strip()
+            result = await execute_hotkey(shortcut)
+            action_summary = f"Hotkey: {shortcut}"
         else:
             result = {
                 "ok": True,
@@ -304,6 +335,7 @@ async def _execute_v2_match(
             action_summary=action_summary,
             started_at=started_at,
             result=result,
+            session_id=session_id,
         )
         result["run_id"] = run_id
         result["action_id"] = step_action_id

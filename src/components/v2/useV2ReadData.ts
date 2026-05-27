@@ -20,15 +20,17 @@ import type {
   NoteDotColor,
   V2BindingSummary,
   V2LayerSummary,
+  V2Macro,
   V2MidiEventPayload,
   V2ProfileSummary,
   V2RunSummary,
 } from "./types";
-import { mapAutomation, mapBindings, mapLayers, mapProfiles, mapRuns, mapStats } from "./adapters";
+import { mapAutomation, mapBindings, mapLayers, mapMacros, mapProfiles, mapRuns, mapStats } from "./adapters";
 import {
   v2Api,
   type BackendActionPreviewPayload,
   type BackendActionRunResult,
+  type BackendBindingClonePayload,
   type BackendBindingCreatePayload,
   type BackendBindingPatch,
   type BackendDevice,
@@ -44,6 +46,7 @@ type V2ReadData = {
   layers: V2LayerSummary[];
   bindings: V2BindingSummary[];
   runs: V2RunSummary[];
+  macros: V2Macro[];
   automation: AutomationState;
   appStats: AppStats;
   monitorEvents: MidiMonitorEvent[];
@@ -85,11 +88,15 @@ type V2ReadData = {
   testAction: (actionId: string) => Promise<BackendActionRunResult>;
   testActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
   addDelayStep: (bindingId: string, durationMs?: number) => Promise<void>;
-  addCommandStep: (bindingId: string, payload: { label?: string; command: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number }) => Promise<void>;
+  addCommandStep: (bindingId: string, payload: { type?: string; label?: string; command?: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number; title?: string; message?: string; urgency?: string }) => Promise<void>;
   updateActionStep: (bindingId: string, bindingActionId: string, patch: { label?: string; command?: string; durationMs?: number; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number }) => Promise<void>;
   deleteActionStep: (bindingId: string, bindingActionId: string) => Promise<void>;
   moveActionStep: (bindingId: string, bindingActionId: string, direction: "up" | "down") => Promise<void>;
   toggleActionStep: (bindingId: string, bindingActionId: string, enabled: boolean) => Promise<void>;
+  saveMacro: (bindingId: string, name: string) => Promise<void>;
+  applyMacro: (macroId: string, bindingId: string, replaceExisting: boolean) => Promise<void>;
+  deleteMacro: (macroId: string) => Promise<void>;
+  cloneBinding: (bindingId: string, payload: BackendBindingClonePayload) => Promise<void>;
 };
 
 type ReadResult<T> = {
@@ -225,6 +232,7 @@ export function useV2ReadData(): V2ReadData {
   const [layers, setLayers] = useState(mockLayers);
   const [bindings, setBindings] = useState(mockBindings);
   const [runs, setRuns] = useState(mockRuns);
+  const [macros, setMacros] = useState<V2Macro[]>([]);
   const [automation, setAutomation] = useState(mockAutomationState);
   const [devices, setDevices] = useState<BackendDevice[]>([]);
   const [inputPorts, setInputPorts] = useState<BackendPort[]>([]);
@@ -247,7 +255,7 @@ export function useV2ReadData(): V2ReadData {
     if (!options?.quiet) setLoading(true);
     setError(null);
 
-    const [profileResult, runResult, automationResult, deviceResult, portResult, inputResult, healthResult] = await Promise.all([
+    const [profileResult, runResult, automationResult, deviceResult, portResult, inputResult, healthResult, macroResult] = await Promise.all([
       readOrFallback(v2Api.profiles, () => false),
       readOrFallback(v2Api.runs, () => false),
       readOrFallback(v2Api.automation, () => false),
@@ -255,6 +263,7 @@ export function useV2ReadData(): V2ReadData {
       readOrFallback(v2Api.ports, () => false),
       readOrFallback(v2Api.inputSettings, () => false),
       readOrFallback(v2Api.health, () => false),
+      readOrFallback(v2Api.macros, () => false),
     ]);
 
     // Backend is reachable if the profiles endpoint responded (even with an empty array).
@@ -293,6 +302,7 @@ export function useV2ReadData(): V2ReadData {
     setProfileSource(nextProfileSource);
     setLayerSource(nextLayerSource);
     setRuns(backendReachable ? mapRuns(runResult.value ?? []) : mockRuns);
+    setMacros(backendReachable ? mapMacros(macroResult.value ?? []) : []);
     setAutomation((current) => mapAutomation(automationResult.value, null, current));
     if (!backendReachable) {
       setMonitorEvents((current) => (current.length > 0 ? current : mockMonitorEvents));
@@ -755,17 +765,21 @@ export function useV2ReadData(): V2ReadData {
 
   const addCommandStep = useCallback(async (
     bindingId: string,
-    payload: { label?: string; command: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number },
+    payload: { type?: string; label?: string; command?: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number; title?: string; message?: string; urgency?: string },
   ) => {
     const backendId = numericBackendId(bindingId);
     if (!backendId) return;
+    const stepType = (payload.type ?? "command") as "command" | "delay" | "notification" | "open_url" | "open_app" | "hotkey";
     await v2Api.createBindingAction(backendId, {
-      type: "command",
+      type: stepType,
       label: payload.label ?? "",
       command: payload.command,
       working_directory: payload.workingDirectory,
       execution_mode: payload.executionMode ?? "argv",
       timeout_ms: payload.timeoutMs,
+      title: payload.title,
+      message: payload.message,
+      urgency: payload.urgency,
       enabled: 1,
     });
     await load({ quiet: true });
@@ -834,6 +848,39 @@ export function useV2ReadData(): V2ReadData {
     await load({ quiet: true });
   }, [load]);
 
+  const saveMacro = useCallback(async (bindingId: string, name: string) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.createMacro(backendId, name);
+    await load({ quiet: true });
+  }, [load]);
+
+  const applyMacro = useCallback(async (macroId: string, bindingId: string, replaceExisting: boolean) => {
+    const backendMacroId = numericBackendId(macroId);
+    const backendBindingId = numericBackendId(bindingId);
+    if (!backendMacroId || !backendBindingId) return;
+    await v2Api.applyMacro(backendMacroId, backendBindingId, replaceExisting);
+    await load({ quiet: true });
+  }, [load]);
+
+  const deleteMacro = useCallback(async (macroId: string) => {
+    const backendId = numericBackendId(macroId);
+    if (!backendId) return;
+    setMacros((current) => current.filter((m) => m.id !== macroId));
+    try {
+      await v2Api.deleteMacro(backendId);
+    } catch {
+      await load({ quiet: true });
+    }
+  }, [load]);
+
+  const cloneBinding = useCallback(async (bindingId: string, payload: BackendBindingClonePayload) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    await v2Api.cloneBinding(backendId, payload);
+    await load({ quiet: true });
+  }, [load]);
+
   const keyboardNotes = useMemo(() => {
     const noteColors = new Map<number, NoteDotColor>();
     const noteIconColors = new Map<number, string>();
@@ -890,6 +937,7 @@ export function useV2ReadData(): V2ReadData {
     layers,
     bindings,
     runs,
+    macros,
     automation,
     appStats,
     monitorEvents,
@@ -936,5 +984,9 @@ export function useV2ReadData(): V2ReadData {
     deleteActionStep,
     moveActionStep,
     toggleActionStep,
+    saveMacro,
+    applyMacro,
+    deleteMacro,
+    cloneBinding,
   };
 }

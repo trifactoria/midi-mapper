@@ -1,13 +1,16 @@
 import asyncio
+import shlex
 import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.actions.executor import safe_execute_command
+from backend.actions.executor import execute_hotkey, execute_notification, safe_execute_command
 from backend.actions.history import record_v2_action_test_run
 from backend.db import db_connect, db_fetchall, db_fetchone
+
+_NATIVE_ACTION_TYPES = {"notification", "open_url", "open_app", "hotkey"}
 
 
 router = APIRouter()
@@ -20,6 +23,9 @@ class ActionPreviewIn(BaseModel):
     working_directory: str | None = None
     execution_mode: str = "argv"
     timeout_ms: int | None = None
+    title: str | None = None
+    message: str | None = None
+    urgency: str | None = None
 
 
 class BindingActionCreateIn(BaseModel):
@@ -31,6 +37,9 @@ class BindingActionCreateIn(BaseModel):
     execution_mode: str = "argv"
     timeout_ms: int | None = None
     enabled: int = 1
+    title: str | None = None
+    message: str | None = None
+    urgency: str | None = None
 
 
 class BindingActionPatchIn(BaseModel):
@@ -42,6 +51,9 @@ class BindingActionPatchIn(BaseModel):
     working_directory: str | None = None
     execution_mode: str | None = None
     timeout_ms: int | None = None
+    title: str | None = None
+    message: str | None = None
+    urgency: str | None = None
 
 
 @router.get("/api/actions/{action_id}")
@@ -79,32 +91,54 @@ async def get_action(action_id: int) -> Dict[str, Any]:
 @router.post("/api/actions/{action_id}/dry_run")
 async def dry_run_action(action_id: int) -> Dict[str, Any]:
     action = await get_action(action_id)
-    if action["type"] == "delay":
+    action_type = action["type"]
+    if action_type == "delay":
         duration_ms = max(0, int(action["duration_ms"] or 0))
         return {
-            "ok": True,
-            "action_id": action_id,
-            "type": "delay",
-            "label": action["label"],
-            "duration_ms": duration_ms,
-            "summary": f"Wait {duration_ms}ms",
-            "would_execute": False,
+            "ok": True, "action_id": action_id, "type": "delay",
+            "label": action["label"], "duration_ms": duration_ms,
+            "summary": f"Wait {duration_ms}ms", "would_execute": False,
         }
-    if action["type"] != "command":
-        raise HTTPException(status_code=400, detail="Action type must be command or delay")
+    if action_type == "notification":
+        title = (action.get("title") or "").strip() or action["label"] or "Notification"
+        return {
+            "ok": True, "action_id": action_id, "type": "notification",
+            "label": action["label"], "title": title,
+            "message": action.get("message") or "",
+            "urgency": action.get("urgency") or None,
+            "summary": f"Notify: {title}", "would_execute": False,
+        }
+    if action_type in _NATIVE_ACTION_TYPES:
+        cmd = action.get("command") or ""
+        return {
+            "ok": True, "action_id": action_id, "type": action_type,
+            "label": action["label"], "command": cmd,
+            "summary": _native_summary(action_type, action), "would_execute": False,
+        }
+    if action_type != "command":
+        raise HTTPException(status_code=400, detail=f"Unknown action type: {action_type}")
     result = {
-        "ok": True,
-        "action_id": action_id,
-        "type": action["type"],
-        "label": action["label"],
-        "command": action["command"],
+        "ok": True, "action_id": action_id, "type": action_type,
+        "label": action["label"], "command": action["command"],
         "execution_mode": action["execution_mode"],
-        "summary": action["command"] or "",
-        "would_execute": False,
+        "summary": action["command"] or "", "would_execute": False,
     }
     if action["duration_ms"] is not None:
         result["duration_ms"] = action["duration_ms"]
     return result
+
+
+def _native_summary(action_type: str, action: Dict[str, Any]) -> str:
+    if action_type == "notification":
+        return f"Notify: {(action.get('title') or '').strip() or action.get('label') or 'Notification'}"
+    if action_type == "open_url":
+        return f"Open URL: {action.get('command') or ''}"
+    if action_type == "open_app":
+        cmd = (action.get("command") or "").split()
+        return f"Open App: {cmd[0] if cmd else 'app'}"
+    if action_type == "hotkey":
+        return f"Hotkey: {action.get('command') or ''}"
+    return action.get("command") or ""
 
 
 async def _binding_exists(binding_id: int) -> bool:
@@ -112,12 +146,19 @@ async def _binding_exists(binding_id: int) -> bool:
 
 
 def _validate_step_payload(payload: BindingActionCreateIn) -> None:
-    if payload.type not in ("command", "delay"):
-        raise HTTPException(status_code=400, detail="Action type must be command or delay")
+    valid_types = {"command", "delay", "notification", "open_url", "open_app", "hotkey"}
+    if payload.type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid action type: {payload.type}")
     if payload.type == "command" and not payload.command.strip():
         raise HTTPException(status_code=400, detail="Action command is required")
     if payload.type == "delay" and (payload.duration_ms is None or payload.duration_ms < 0):
         raise HTTPException(status_code=400, detail="Delay duration_ms must be 0 or greater")
+    if payload.type == "notification" and not (payload.title or "").strip():
+        raise HTTPException(status_code=400, detail="Notification title is required")
+    if payload.type in ("open_url", "open_app", "hotkey") and not payload.command.strip():
+        raise HTTPException(status_code=400, detail=f"{payload.type} requires a command/url/shortcut")
+    if payload.urgency and payload.urgency not in ("low", "normal", "critical"):
+        raise HTTPException(status_code=400, detail="urgency must be low, normal, or critical")
 
 
 async def _list_binding_steps(binding_id: int) -> list[Dict[str, Any]]:
@@ -135,7 +176,10 @@ async def _list_binding_steps(binding_id: int) -> list[Dict[str, Any]]:
           a.duration_ms,
           a.working_directory,
           a.execution_mode,
-          a.timeout_ms
+          a.timeout_ms,
+          a.title,
+          a.message,
+          a.urgency
         FROM binding_actions ba
         JOIN actions a ON a.id = ba.action_id
         WHERE ba.binding_id = ?
@@ -186,22 +230,26 @@ async def create_binding_action(binding_id: int, payload: BindingActionCreateIn)
 
     next_order = await _next_group_order(binding_id)
     async with db_connect() as db:
+        _cmd_types = {"command", "open_url", "open_app", "hotkey"}
         action_cur = await db.execute(
             """
             INSERT INTO actions(
               type, label, command, duration_ms, working_directory,
-              execution_mode, timeout_ms
+              execution_mode, timeout_ms, title, message, urgency
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.type,
                 payload.label,
-                payload.command if payload.type == "command" else None,
+                payload.command if payload.type in _cmd_types else None,
                 payload.duration_ms if payload.type == "delay" else None,
                 payload.working_directory,
                 payload.execution_mode,
                 payload.timeout_ms,
+                payload.title if payload.type == "notification" else None,
+                payload.message if payload.type == "notification" else None,
+                payload.urgency if payload.type == "notification" else None,
             ),
         )
         action_id = action_cur.lastrowid
@@ -246,7 +294,7 @@ async def update_binding_action(
 
     action_updates = []
     action_params: list[Any] = []
-    for field_name in ("label", "command", "duration_ms", "working_directory", "execution_mode", "timeout_ms"):
+    for field_name in ("label", "command", "duration_ms", "working_directory", "execution_mode", "timeout_ms", "title", "message", "urgency"):
         value = getattr(payload, field_name)
         if value is not None:
             action_updates.append(f"{field_name} = ?")
@@ -350,12 +398,53 @@ async def reorder_action_group_steps(ordered_ids: list[int]) -> Dict[str, Any]:
 
 @router.post("/api/actions/preview/test")
 async def test_action_preview(payload: ActionPreviewIn) -> Dict[str, Any]:
-    if payload.type != "command":
-        raise HTTPException(status_code=400, detail="Only command actions are supported")
+    action_type = payload.type
+
+    if action_type == "notification":
+        title = (payload.title or "").strip() or payload.label or "Notification"
+        result = await execute_notification(title, payload.message or "", payload.urgency or None)
+        result["label"] = payload.label or title
+        result["summary"] = f"Notify: {title}"
+        result["preview"] = True
+        return result
+
+    if action_type == "open_url":
+        url = payload.command.strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is required")
+        result = await safe_execute_command(f"xdg-open {shlex.quote(url)}", execution_mode="detached")
+        result["label"] = payload.label or url
+        result["summary"] = f"Open URL: {url}"
+        result["preview"] = True
+        return result
+
+    if action_type == "open_app":
+        app_cmd = payload.command.strip()
+        if not app_cmd:
+            raise HTTPException(status_code=400, detail="App command is required")
+        result = await safe_execute_command(app_cmd, execution_mode="detached")
+        exe = app_cmd.split()[0]
+        result["label"] = payload.label or exe
+        result["summary"] = f"Open App: {exe}"
+        result["preview"] = True
+        return result
+
+    if action_type == "hotkey":
+        shortcut = payload.command.strip()
+        if not shortcut:
+            raise HTTPException(status_code=400, detail="Shortcut is required")
+        result = await execute_hotkey(shortcut)
+        result["label"] = payload.label or shortcut
+        result["summary"] = f"Hotkey: {shortcut}"
+        result["preview"] = True
+        return result
+
+    if action_type != "command":
+        raise HTTPException(status_code=400, detail=f"Unsupported action type for preview: {action_type}")
+
     command = payload.command.strip()
     if not command:
         raise HTTPException(status_code=400, detail="Action command is required")
-
     result = await safe_execute_command(
         command,
         timeout_ms=payload.timeout_ms,
@@ -371,34 +460,62 @@ async def test_action_preview(payload: ActionPreviewIn) -> Dict[str, Any]:
 @router.post("/api/actions/{action_id}/test")
 async def test_action(action_id: int) -> Dict[str, Any]:
     action = await get_action(action_id)
-    if action["type"] == "delay":
+    action_type = action["type"]
+    started_at = time.time()
+
+    if action_type == "delay":
         duration_ms = max(0, int(action["duration_ms"] or 0))
-        started_at = time.time()
         await asyncio.sleep(duration_ms / 1000)
         return {
-            "ok": True,
-            "action_id": action_id,
-            "duration_ms": duration_ms,
+            "ok": True, "action_id": action_id, "duration_ms": duration_ms,
             "summary": f"Wait {duration_ms}ms",
             "duration_actual_ms": int((time.time() - started_at) * 1000),
         }
-    if action["type"] != "command":
-        raise HTTPException(status_code=400, detail="Action type must be command or delay")
-    if not action["command"]:
-        raise HTTPException(status_code=400, detail="Action command is required")
-    started_at = time.time()
-    result = await safe_execute_command(
-        action["command"],
-        timeout_ms=action.get("timeout_ms"),
-        execution_mode=action.get("execution_mode", "argv"),
-    )
+
+    if action_type == "notification":
+        title = (action.get("title") or "").strip() or action["label"] or "Notification"
+        result = await execute_notification(
+            title, action.get("message") or "", action.get("urgency") or None
+        )
+        summary = f"Notify: {title}"
+    elif action_type == "open_url":
+        url = (action.get("command") or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is required")
+        result = await safe_execute_command(f"xdg-open {shlex.quote(url)}", execution_mode="detached")
+        summary = f"Open URL: {url}"
+    elif action_type == "open_app":
+        app_cmd = (action.get("command") or "").strip()
+        if not app_cmd:
+            raise HTTPException(status_code=400, detail="App command is required")
+        result = await safe_execute_command(app_cmd, execution_mode="detached")
+        summary = f"Open App: {app_cmd.split()[0]}"
+    elif action_type == "hotkey":
+        shortcut = (action.get("command") or "").strip()
+        if not shortcut:
+            raise HTTPException(status_code=400, detail="Shortcut is required")
+        result = await execute_hotkey(shortcut)
+        summary = f"Hotkey: {shortcut}"
+    elif action_type == "command":
+        if not action["command"]:
+            raise HTTPException(status_code=400, detail="Action command is required")
+        result = await safe_execute_command(
+            action["command"],
+            timeout_ms=action.get("timeout_ms"),
+            execution_mode=action.get("execution_mode", "argv"),
+        )
+        summary = action["command"]
+        result["command"] = action["command"]
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action type: {action_type}")
+
     run_id = await record_v2_action_test_run(
         action_id=action_id,
-        action_summary=action["command"],
+        action_summary=summary,
         started_at=started_at,
         result=result,
     )
     result["action_id"] = action_id
-    result["command"] = action["command"]
+    result["summary"] = summary
     result["run_id"] = run_id
     return result

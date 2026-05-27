@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from backend.db import db_connect, db_fetchone
 
@@ -107,6 +107,7 @@ async def record_v2_action_run(
     action_summary: str,
     started_at: float,
     result: Dict[str, Any],
+    session_id: Optional[str] = None,
 ) -> int:
     """Record one live v2 binding action execution in runs."""
     finished_monotonic = time.time()
@@ -130,9 +131,10 @@ async def record_v2_action_run(
               exit_code,
               stdout_preview,
               stderr_preview,
-              error_message
+              error_message,
+              session_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 action_id,
@@ -149,6 +151,7 @@ async def record_v2_action_run(
                 _preview(result.get("stdout_preview") or result.get("stdout")),
                 _preview(result.get("stderr_preview") or result.get("stderr")),
                 _preview(result.get("error")),
+                session_id,
             ),
         )
         await db.commit()

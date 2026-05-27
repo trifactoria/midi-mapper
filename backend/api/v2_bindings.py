@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from backend.db import db_fetchall, db_fetchone
 
 
-SUPPORTED_ACTION_TYPES = {"command", "delay"}
+SUPPORTED_ACTION_TYPES = {"command", "delay", "notification", "open_url", "open_app", "hotkey"}
 
 
 class V2TriggerIn(BaseModel):
@@ -33,6 +33,9 @@ class V2ActionIn(BaseModel):
     timeout_ms: Optional[int] = None
     notify_text: str = ""
     notify_emoji: str = ""
+    title: Optional[str] = None
+    message: Optional[str] = None
+    urgency: Optional[str] = None
 
 
 class V2ActionPatchIn(BaseModel):
@@ -46,6 +49,9 @@ class V2ActionPatchIn(BaseModel):
     timeout_ms: Optional[int] = None
     notify_text: Optional[str] = None
     notify_emoji: Optional[str] = None
+    title: Optional[str] = None
+    message: Optional[str] = None
+    urgency: Optional[str] = None
 
 
 class V2BindingCreateIn(BaseModel):
@@ -108,11 +114,17 @@ def validate_trigger(trigger: V2TriggerIn) -> None:
 
 def validate_action(action: V2ActionIn) -> None:
     if action.type not in SUPPORTED_ACTION_TYPES:
-        raise HTTPException(status_code=400, detail="Action type must be command or delay")
+        raise HTTPException(status_code=400, detail=f"Invalid action type: {action.type}")
     if action.type == "command" and not action.command.strip():
         raise HTTPException(status_code=400, detail="Action command is required")
     if action.type == "delay" and (action.duration_ms is None or action.duration_ms < 0):
         raise HTTPException(status_code=400, detail="Delay duration_ms must be 0 or greater")
+    if action.type == "notification" and not (action.title or "").strip():
+        raise HTTPException(status_code=400, detail="Notification title is required")
+    if action.type in ("open_url", "open_app", "hotkey") and not action.command.strip():
+        raise HTTPException(status_code=400, detail=f"{action.type} requires a command/url/shortcut")
+    if action.urgency and action.urgency not in ("low", "normal", "critical"):
+        raise HTTPException(status_code=400, detail="urgency must be low, normal, or critical")
 
 
 async def list_binding_action_steps(binding_id: int) -> list[Dict[str, Any]]:
@@ -137,6 +149,9 @@ async def list_binding_action_steps(binding_id: int) -> list[Dict[str, Any]]:
           a.allow_concurrent,
           a.notify_text,
           a.notify_emoji,
+          a.title,
+          a.message,
+          a.urgency,
           a.legacy_binding_id
         FROM binding_actions ba
         JOIN actions a ON a.id = ba.action_id
@@ -166,6 +181,9 @@ async def list_binding_action_steps(binding_id: int) -> list[Dict[str, Any]]:
             "allow_concurrent": row["allow_concurrent"],
             "notify_text": row["notify_text"],
             "notify_emoji": row["notify_emoji"],
+            "title": row["title"],
+            "message": row["message"],
+            "urgency": row["urgency"],
             "legacy_binding_id": row["legacy_binding_id"],
         }
         for row in rows
@@ -188,6 +206,9 @@ def _binding_response(row: Dict[str, Any]) -> Dict[str, Any]:
         "allow_concurrent": row["allow_concurrent"],
         "notify_text": row["notify_text"],
         "notify_emoji": row["notify_emoji"],
+        "title": row["action_title"],
+        "message": row["action_message"],
+        "urgency": row["action_urgency"],
         "legacy_binding_id": row["action_legacy_binding_id"],
     }
     actions = row["actions"] if "actions" in row else [primary_action]
@@ -285,6 +306,9 @@ BINDING_SELECT = """
       a.allow_concurrent,
       a.notify_text,
       a.notify_emoji,
+      a.title AS action_title,
+      a.message AS action_message,
+      a.urgency AS action_urgency,
       a.legacy_binding_id AS action_legacy_binding_id
     FROM bindings_v2 b
     JOIN triggers t ON t.id = b.trigger_id

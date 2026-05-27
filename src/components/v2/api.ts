@@ -68,6 +68,9 @@ export type BackendAction = {
   timeout_ms?: number | null;
   notify_text?: string | null;
   notify_emoji?: string | null;
+  title?: string | null;
+  message?: string | null;
+  urgency?: string | null;
 };
 
 export type BackendBinding = {
@@ -127,11 +130,14 @@ export type BackendBindingCreatePayload = {
     velocity_max?: number;
   };
   action: {
-    type: "command";
+    type: "command" | "notification" | "open_url" | "open_app" | "hotkey";
     label: string;
-    command: string;
+    command?: string;
     working_directory?: string;
     execution_mode?: "argv" | "detached";
+    title?: string;
+    message?: string;
+    urgency?: string;
   };
   enabled: 0 | 1;
   require_armed: 0 | 1;
@@ -143,16 +149,19 @@ export type BackendBindingCreatePayload = {
 };
 
 export type BackendActionPreviewPayload = {
-  type: "command";
+  type: "command" | "notification" | "open_url" | "open_app" | "hotkey";
   label?: string;
-  command: string;
+  command?: string;
   working_directory?: string;
   execution_mode?: "argv" | "detached";
   timeout_ms?: number;
+  title?: string;
+  message?: string;
+  urgency?: string;
 };
 
 export type BackendBindingActionCreatePayload = {
-  type: "delay" | "command";
+  type: "delay" | "command" | "notification" | "open_url" | "open_app" | "hotkey";
   label?: string;
   command?: string;
   duration_ms?: number;
@@ -160,6 +169,9 @@ export type BackendBindingActionCreatePayload = {
   timeout_ms?: number;
   enabled?: 0 | 1;
   execution_mode?: "argv" | "detached";
+  title?: string;
+  message?: string;
+  urgency?: string;
 };
 
 export type BackendBindingActionPatchPayload = {
@@ -171,6 +183,9 @@ export type BackendBindingActionPatchPayload = {
   working_directory?: string;
   execution_mode?: "argv" | "detached";
   timeout_ms?: number;
+  title?: string;
+  message?: string;
+  urgency?: string;
 };
 
 export type BackendActionRunResult = {
@@ -203,6 +218,26 @@ export type BackendRun = {
   stdout_preview?: string | null;
   stderr_preview?: string | null;
   error_message?: string | null;
+  session_id?: string | null;
+};
+
+export type BackendMacro = {
+  id: number | string;
+  name: string;
+  description?: string | null;
+  step_count?: number | null;
+  actions_json?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type BackendBindingClonePayload = {
+  target_note?: number | null;
+  target_channel?: number | null;
+  target_controller?: number | null;
+  target_event_type?: string | null;
+  target_layer_id?: number | null;
+  enabled?: 0 | 1;
 };
 
 export type BackendAutomationSettings = {
@@ -361,4 +396,16 @@ export const v2Api = {
     ),
   reorderActionGroup: (orderedIds: string[]) =>
     apiPost<{ ok: boolean }>("/api/action-groups/reorder", orderedIds.map((id) => Number(id))),
+  macros: () => apiGet<BackendMacro[]>("/api/macros"),
+  createMacro: (bindingId: string, name: string, description?: string) =>
+    apiPost<BackendMacro>("/api/macros", { binding_id: Number(bindingId), name, description: description ?? "" }),
+  deleteMacro: (macroId: string) =>
+    apiDelete<{ ok: boolean; deleted_macro_id: number }>(`/api/macros/${macroId}`),
+  applyMacro: (macroId: string, bindingId: string, replaceExisting?: boolean) =>
+    apiPost<{ ok: boolean; action_count: number; binding_id: number }>(
+      `/api/macros/${macroId}/apply`,
+      { binding_id: Number(bindingId), replace_existing: replaceExisting ?? false },
+    ),
+  cloneBinding: (bindingId: string, payload: BackendBindingClonePayload) =>
+    apiPost<BackendBinding>(`/api/bindings/${bindingId}/clone`, payload),
 };

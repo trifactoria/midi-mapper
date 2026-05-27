@@ -3,9 +3,12 @@ import type {
   AutomationState,
   BindingKind,
   RunStatus,
+  SessionStatus,
   V2BindingSummary,
   V2ActionStep,
+  V2ExecutionSession,
   V2LayerSummary,
+  V2Macro,
   V2ProfileSummary,
   V2RunSummary,
 } from "./types";
@@ -14,6 +17,7 @@ import type {
   BackendBinding,
   BackendDevice,
   BackendLayer,
+  BackendMacro,
   BackendMatchingSettings,
   BackendProfile,
   BackendRun,
@@ -64,10 +68,42 @@ function triggerCondition(trigger?: BackendTrigger | null): string {
   return "Vel 0-127";
 }
 
+/** Formats a 0-based MIDI channel to a 1-based display label: "Ch 1" */
+export function channelLabel(channel: number | null | undefined): string {
+  return `Ch ${(channel ?? 0) + 1}`;
+}
+
+/**
+ * Produces a full trigger label including channel prefix.
+ * Use this for standalone string contexts (run history, console, actions panel)
+ * where channel is not rendered separately.
+ * Example: "Ch 1 · C3 (48)"
+ */
+export function formatTriggerWithChannel(
+  channel: number | null | undefined,
+  label: string,
+): string {
+  return `${channelLabel(channel)} · ${label}`;
+}
+
 function mapActionStep(action: NonNullable<BackendBinding["actions"]>[number], fallbackIndex: number): V2ActionStep {
   const type = action.type ?? "command";
   const durationMs = action.duration_ms ?? undefined;
   const command = action.command?.trim() || "";
+  const title = (action as Record<string, unknown>)["title"] as string | undefined;
+  const message = (action as Record<string, unknown>)["message"] as string | undefined;
+  const urgency = (action as Record<string, unknown>)["urgency"] as string | undefined;
+
+  function autoLabel(): string {
+    if (action.label?.trim()) return action.label.trim();
+    if (type === "delay") return `Wait ${durationMs ?? 0}ms`;
+    if (type === "notification") return `Notify: ${title?.trim() || "Notification"}`;
+    if (type === "open_url") return `Open URL: ${command}`;
+    if (type === "open_app") return `Open App: ${command.split(" ")[0] || "app"}`;
+    if (type === "hotkey") return `Hotkey: ${command}`;
+    return command || "Command";
+  }
+
   return {
     bindingActionId: String(action.binding_action_id ?? action.action_id ?? action.id ?? fallbackIndex),
     bindingId: String(action.binding_id ?? ""),
@@ -75,14 +111,15 @@ function mapActionStep(action: NonNullable<BackendBinding["actions"]>[number], f
     executionOrder: action.execution_order ?? fallbackIndex,
     enabled: asBool(action.enabled ?? 1),
     type,
-    label:
-      action.label?.trim() ||
-      (type === "delay" ? `Wait ${durationMs ?? 0}ms` : command || "Command"),
+    label: autoLabel(),
     command: command || undefined,
     durationMs,
     workingDirectory: action.working_directory?.trim() || undefined,
     executionMode: action.execution_mode ?? undefined,
     timeoutMs: action.timeout_ms ?? undefined,
+    title: title?.trim() || undefined,
+    message: message?.trim() || undefined,
+    urgency: urgency?.trim() || undefined,
   };
 }
 
@@ -199,7 +236,7 @@ export function mapRuns(rows: BackendRun[]): V2RunSummary[] {
     return {
       id: String(run.id),
       kind: bindingKind(trigger),
-      triggerLabel: triggerLabel(trigger),
+      triggerLabel: trigger ? formatTriggerWithChannel(trigger.channel, triggerLabel(trigger)) : "Trigger",
       triggerCondition: condition,
       actionLabel: action,
       status: mapStatus(run.status),
@@ -210,10 +247,77 @@ export function mapRuns(rows: BackendRun[]): V2RunSummary[] {
       stderrPreview: run.stderr_preview?.trim() || undefined,
       errorMessage: run.error_message?.trim() || undefined,
       startedAt: run.started_at ?? undefined,
+      sessionId: run.session_id ?? undefined,
       action,
       time: run.started_at ? new Date(run.started_at).toLocaleTimeString() : undefined,
     };
   });
+}
+
+export function groupRunsIntoSessions(runs: V2RunSummary[]): V2ExecutionSession[] {
+  const sessionMap = new Map<string, V2ExecutionSession>();
+  const singletons: V2ExecutionSession[] = [];
+
+  for (const run of runs) {
+    if (!run.sessionId) {
+      singletons.push({
+        sessionId: `single-${run.id}`,
+        triggerLabel: run.triggerLabel,
+        triggerCondition: run.triggerCondition,
+        startedAt: run.startedAt,
+        totalDurationMs: run.durationMs,
+        status: run.status,
+        stepCount: 1,
+        failureCount: run.status !== "success" ? 1 : 0,
+        steps: [run],
+      });
+      continue;
+    }
+
+    const existing = sessionMap.get(run.sessionId);
+    if (!existing) {
+      sessionMap.set(run.sessionId, {
+        sessionId: run.sessionId,
+        triggerLabel: run.triggerLabel,
+        triggerCondition: run.triggerCondition,
+        startedAt: run.startedAt,
+        totalDurationMs: run.durationMs,
+        status: run.status as SessionStatus,
+        stepCount: 1,
+        failureCount: run.status !== "success" ? 1 : 0,
+        steps: [run],
+      });
+    } else {
+      existing.steps.push(run);
+      existing.totalDurationMs += run.durationMs;
+      existing.stepCount++;
+      if (run.status !== "success") {
+        existing.failureCount++;
+        existing.status = "partial";
+      }
+      if (run.startedAt && existing.startedAt && run.startedAt < existing.startedAt) {
+        existing.startedAt = run.startedAt;
+        existing.triggerLabel = run.triggerLabel;
+        existing.triggerCondition = run.triggerCondition;
+      }
+    }
+  }
+
+  return [...sessionMap.values(), ...singletons].sort((a, b) => {
+    if (!a.startedAt) return 1;
+    if (!b.startedAt) return -1;
+    return b.startedAt.localeCompare(a.startedAt);
+  });
+}
+
+export function mapMacros(rows: BackendMacro[]): V2Macro[] {
+  return rows.map((macro) => ({
+    id: String(macro.id),
+    name: macro.name,
+    description: macro.description?.trim() || "",
+    stepCount: macro.step_count ?? 0,
+    createdAt: macro.created_at ?? undefined,
+  }));
 }
 
 export function mapAutomation(

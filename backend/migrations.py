@@ -233,3 +233,38 @@ async def apply_migrations() -> None:
             """
         )
         await db.commit()
+
+        # Apply migration v2-002: Add session_id to runs for execution grouping
+        cursor = await db.execute("PRAGMA table_info(runs)")
+        run_cols = [col[1] for col in await cursor.fetchall()]
+        if "session_id" not in run_cols:
+            await db.execute("ALTER TABLE runs ADD COLUMN session_id TEXT")
+            await db.commit()
+
+        # Apply migration v2-003: Macros/templates table
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS macros (
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              actions_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.commit()
+
+        # Apply migration v2-004: Native action type fields
+        cursor = await db.execute("PRAGMA table_info(actions)")
+        action_cols_v4 = [col[1] for col in await cursor.fetchall()]
+        if "title" not in action_cols_v4:
+            await db.execute("ALTER TABLE actions ADD COLUMN title TEXT")
+            await db.commit()
+        if "message" not in action_cols_v4:
+            await db.execute("ALTER TABLE actions ADD COLUMN message TEXT")
+            await db.commit()
+        if "urgency" not in action_cols_v4:
+            await db.execute("ALTER TABLE actions ADD COLUMN urgency TEXT")
+            await db.commit()

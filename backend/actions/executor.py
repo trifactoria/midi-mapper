@@ -234,6 +234,76 @@ async def _wait_for_proc(
 _DETACHED_PROBE_SEC = 0.2
 
 
+def _normalize_hotkey(shortcut: str) -> str:
+    """Lowercase modifier keys for xdotool (Ctrl+Alt+T → ctrl+alt+T)."""
+    MODIFIER_MAP = {
+        "ctrl": "ctrl", "control": "ctrl",
+        "alt": "alt",
+        "shift": "shift",
+        "super": "super", "meta": "super", "win": "super", "cmd": "super",
+    }
+    parts = shortcut.split("+")
+    result = []
+    for part in parts:
+        p = part.strip()
+        mapped = MODIFIER_MAP.get(p.lower())
+        result.append(mapped if mapped else p)
+    return "+".join(result)
+
+
+async def execute_notification(
+    title: str,
+    message: str = "",
+    urgency: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Send a desktop notification via notify-send."""
+    if not shutil.which("notify-send", path=EXEC_PATH):
+        return {
+            "ok": False,
+            "error": "notify-send not found — install libnotify-bin (apt install libnotify-bin)",
+            "argv": [],
+            "stdout": "",
+            "stderr": "",
+            "exit_code": None,
+            "path_used": EXEC_PATH,
+        }
+    parts = ["notify-send"]
+    if urgency in ("low", "normal", "critical"):
+        parts += ["--urgency", urgency]
+    parts.append((title.strip() or "Notification"))
+    if message and message.strip():
+        parts.append(message.strip())
+    command = " ".join(shlex.quote(p) for p in parts)
+    return await safe_execute_command(command)
+
+
+async def execute_hotkey(shortcut: str) -> Dict[str, Any]:
+    """Send a keyboard shortcut via xdotool key."""
+    shortcut = shortcut.strip()
+    if not shortcut:
+        return {
+            "ok": False,
+            "error": "No shortcut specified",
+            "argv": [],
+            "stdout": "",
+            "stderr": "",
+            "exit_code": None,
+            "path_used": EXEC_PATH,
+        }
+    if not shutil.which("xdotool", path=EXEC_PATH):
+        return {
+            "ok": False,
+            "error": "xdotool not found — install with: apt install xdotool",
+            "argv": [],
+            "stdout": "",
+            "stderr": "",
+            "exit_code": None,
+            "path_used": EXEC_PATH,
+        }
+    normalized = _normalize_hotkey(shortcut)
+    return await safe_execute_command(f"xdotool key {shlex.quote(normalized)}")
+
+
 async def _launch_detached(
     resolved_exe: str,
     parts: list,
