@@ -2,6 +2,7 @@ import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from backend.actions.executor import safe_execute_command
 from backend.actions.history import record_v2_action_test_run
@@ -9,6 +10,15 @@ from backend.db import db_fetchone
 
 
 router = APIRouter()
+
+
+class ActionPreviewIn(BaseModel):
+    type: str = "command"
+    label: str = ""
+    command: str = ""
+    working_directory: str | None = None
+    execution_mode: str = "argv"
+    timeout_ms: int | None = None
 
 
 @router.get("/api/actions/{action_id}")
@@ -57,6 +67,26 @@ async def dry_run_action(action_id: int) -> Dict[str, Any]:
         "summary": action["command"] or "",
         "would_execute": False,
     }
+
+
+@router.post("/api/actions/preview/test")
+async def test_action_preview(payload: ActionPreviewIn) -> Dict[str, Any]:
+    if payload.type != "command":
+        raise HTTPException(status_code=400, detail="Only command actions are supported")
+    command = payload.command.strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="Action command is required")
+
+    result = await safe_execute_command(
+        command,
+        timeout_ms=payload.timeout_ms,
+        execution_mode=payload.execution_mode or "argv",
+        working_directory=payload.working_directory,
+    )
+    result["command"] = command
+    result["label"] = payload.label or command
+    result["preview"] = True
+    return result
 
 
 @router.post("/api/actions/{action_id}/test")

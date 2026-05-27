@@ -113,10 +113,21 @@ export type BackendBindingCreatePayload = {
   display_icon?: string;
 };
 
+export type BackendActionPreviewPayload = {
+  type: "command";
+  label?: string;
+  command: string;
+  working_directory?: string;
+  execution_mode?: "argv" | "detached";
+  timeout_ms?: number;
+};
+
 export type BackendActionRunResult = {
   ok?: boolean;
   action_id?: number | string;
   command?: string;
+  label?: string;
+  preview?: boolean;
   summary?: string;
   stdout?: string;
   stdout_preview?: string;
@@ -274,4 +285,6 @@ export const v2Api = {
   setKeygrab: (enabled: boolean) => apiPost<{ ok: boolean; keygrab: boolean }>(`/api/keygrab/set?enabled=${String(enabled)}`),
   dryRunAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/dry_run`),
   testAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/test`),
+  testActionPreview: (payload: BackendActionPreviewPayload) =>
+    apiPost<BackendActionRunResult>("/api/actions/preview/test", payload),
 };

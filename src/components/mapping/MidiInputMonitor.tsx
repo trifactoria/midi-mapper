@@ -75,7 +75,7 @@ export function MidiInputMonitor({
         {!last && (
           <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/35">
             <span className="h-1.5 w-1.5 rounded-full bg-white/25" />
-            Waiting for MIDI data
+            Waiting for MIDI data...
           </span>
         )}
         {last && (
@@ -100,7 +100,7 @@ export function MidiInputMonitor({
           <span className="truncate font-mono text-[12.5px] text-white/90">
             {last
               ? `${last.type} · Ch ${last.channel} · ${last.value}`
-              : "Waiting for MIDI input..."}
+              : "Waiting for MIDI data..."}
           </span>
           {portLabel && (
             <span className="ml-auto hidden shrink-0 truncate font-mono text-[10.5px] text-white/40 md:inline">

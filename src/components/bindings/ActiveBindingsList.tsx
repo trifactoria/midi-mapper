@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ICONS } from "../icons";
 import type { V2BindingSummary } from "../v2/types";
 
 const BINDING_COLOR_HEX: Record<string, string> = {
@@ -15,6 +16,12 @@ const BINDING_COLOR_HEX: Record<string, string> = {
   orange:  "#fb923c",
   red:     "#f87171",
 };
+
+function bindingColorHex(color: string | undefined): string | undefined {
+  if (!color) return undefined;
+  if (color.startsWith("#")) return color;
+  return BINDING_COLOR_HEX[color];
+}
 
 type Props = {
   bindings: V2BindingSummary[];
@@ -42,21 +49,29 @@ function KindBadge({ kind }: { kind: V2BindingSummary["kind"] }) {
   );
 }
 
-function KindGlyph({ kind }: { kind: V2BindingSummary["kind"] }) {
-  if (kind === "cc") {
-    return (
-      <span className="grid h-6 w-6 shrink-0 place-items-center rounded border border-amber-300/20 bg-amber-300/[0.06] text-amber-200">
-        <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <circle cx="8" cy="8" r="4.5" />
-          <path d="M8 3.5v2M8 10.5v2M3.5 8h2M10.5 8h2" />
-        </svg>
-      </span>
-    );
-  }
+function InlineBindingIcon({ binding }: { binding: V2BindingSummary }) {
+  const color = bindingColorHex(binding.displayColor);
+  const entry = binding.icon ? ICONS.find((icon) => icon.key === binding.icon) : undefined;
+  if (!entry) return null;
+
   return (
-    <span className="grid h-6 w-6 shrink-0 place-items-center rounded border border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-200">
-      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <path d="M5 3v8.5a2 2 0 1 1-2-2H5V3l8-1v8.5a2 2 0 1 1-2-2H13" />
+    <span
+      className="inline-grid h-4 w-4 shrink-0 place-items-center"
+      style={{ color: color ?? "#67e8f9" }}
+      title={entry.label}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        className="h-3.5 w-3.5"
+        fill={entry.fill ? "currentColor" : "none"}
+        stroke={entry.fill ? "none" : "currentColor"}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {entry.paths.map((d, i) => (
+          <path key={i} d={d} />
+        ))}
       </svg>
     </span>
   );
@@ -107,7 +122,6 @@ export function ActiveBindingsList({
           ].join(" ")}
         >
           <div className="flex items-center gap-2">
-            <KindGlyph kind={binding.kind} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 leading-none">
                 <span className="font-mono text-[10px] text-white/35">Ch {(binding.channel ?? 0) + 1}</span>
@@ -117,6 +131,7 @@ export function ActiveBindingsList({
                 {binding.triggerCondition && (
                   <span className="font-mono text-[10px] text-white/40">{binding.triggerCondition}</span>
                 )}
+                <InlineBindingIcon binding={binding} />
               </div>
               <div className="mt-[3px] flex items-center gap-1 leading-none">
                 <span className="text-cyan-300/55" aria-hidden>→</span>
@@ -126,10 +141,10 @@ export function ActiveBindingsList({
               </div>
             </div>
             <div className="relative flex shrink-0 items-center gap-1" data-binding-menu>
-              {binding.displayColor && BINDING_COLOR_HEX[binding.displayColor] && (
+              {binding.displayColor && bindingColorHex(binding.displayColor) && (
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: BINDING_COLOR_HEX[binding.displayColor] }}
+                  style={{ backgroundColor: bindingColorHex(binding.displayColor) }}
                   title={binding.displayColor}
                 />
               )}

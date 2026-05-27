@@ -139,13 +139,13 @@ export function SettingsPanel({
       <section className="rounded-md border border-white/10 bg-white/[0.03] p-4">
         <SectionHeader>Runtime</SectionHeader>
         <div className="divide-y divide-white/[0.06]">
-          <SettingRow label="Matching mode">
-            <span className="rounded bg-white/[0.06] px-2 py-px text-[11px] font-mono text-white/65">
-              {automation.matchingMode}
+          <SettingRow label="Runtime">
+            <span className="rounded border border-cyan-300/20 bg-cyan-300/[0.07] px-2 py-px text-[11px] font-mono text-cyan-100/80">
+              v2 runtime active
             </span>
           </SettingRow>
           <div className="py-2 text-[10.5px] leading-relaxed text-white/40">
-            v2 is the active product mode. Legacy mode is compatibility scaffolding only.
+            MIDI matching and command execution are handled by the v2 runtime.
           </div>
         </div>
       </section>

@@ -12,6 +12,11 @@ const COLOR_HEX: Record<string, string> = {
   orange: "#fb923c", red: "#f87171",
 };
 
+function bindingColorHex(color: string | undefined): string {
+  if (color?.startsWith("#")) return color;
+  return COLOR_HEX[color ?? ""] ?? "#22d3ee";
+}
+
 type FormState = {
   eventType: "note_on" | "control_change";
   channel: number;
@@ -327,7 +332,11 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
               <div>
                 <FieldLabel>Icon</FieldLabel>
                 <div className="mt-1">
-                  <IconPicker value={form.displayIcon} onChange={(v) => set("displayIcon", v)} />
+                  <IconPicker
+                    value={form.displayIcon}
+                    onChange={(v) => set("displayIcon", v)}
+                    color={bindingColorHex(form.displayColor)}
+                  />
                 </div>
               </div>
               <div>

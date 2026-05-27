@@ -3,7 +3,7 @@ import { ActiveBindingsList } from "../bindings/ActiveBindingsList";
 import { EditBindingModal } from "../bindings/EditBindingModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { RunHistoryPreview } from "../history/RunHistoryPreview";
-import type { BackendActionRunResult, BackendBindingCreatePayload, BackendBindingPatch } from "../v2/api";
+import type { BackendActionPreviewPayload, BackendActionRunResult, BackendBindingCreatePayload, BackendBindingPatch } from "../v2/api";
 import type {
   AutomationState,
   CcBar,
@@ -30,14 +30,15 @@ type Props = {
   onEditBinding?: (bindingId: string, patch: BackendBindingPatch) => Promise<void>;
   onToggleBindingEnabled?: (bindingId: string) => void;
   onDuplicateBinding?: (bindingId: string) => Promise<V2BindingSummary | null>;
-  onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
+  onTestActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
   onDeleteBinding: (bindingId: string) => Promise<void>;
   onClearRuns?: () => Promise<void>;
   onKeygrabChange?: (enabled: boolean) => void;
   onMouseModeChange?: (mouseMode: boolean) => void;
   onClearEvents?: () => void;
-  onSimulateNote?: (note: number) => void;
+  onSimulateNote?: (note: number, velocity?: number, matched?: boolean, matchedBindingId?: string | null) => void;
+  onSimulateCc?: (controller: number, value: number, matched?: boolean, matchedBindingId?: string | null) => void;
   selectedInputPort?: string | null;
   liveMatchedBindingId?: string | null;
   lastMidiEvent?: V2MidiEventPayload | null;
@@ -79,14 +80,15 @@ export function MappingTab({
   onEditBinding,
   onToggleBindingEnabled,
   onDuplicateBinding,
-  onDryRunAction,
   onTestAction,
+  onTestActionPreview,
   onDeleteBinding,
   onClearRuns,
   onKeygrabChange,
   onMouseModeChange,
   onClearEvents,
   onSimulateNote,
+  onSimulateCc,
   selectedInputPort,
   liveMatchedBindingId,
   lastMidiEvent,
@@ -99,17 +101,31 @@ export function MappingTab({
 
   function handleNoteClick(note: number) {
     if (!automation.mouseMode) return;
-    onSimulateNote?.(note);
     const matching = bindings.filter(
       (b) => b.kind === "note" && b.note === note && b.enabled && b.actionId,
     );
+    onSimulateNote?.(note, undefined, matching.length > 0, matching[0]?.id ?? null);
     for (const b of matching) {
       void onTestAction(b.actionId!).catch(() => {});
     }
     setTileCapture({ type: "note", value: note, key: ++tileCaptureKeyRef.current });
   }
-  function handleCcClick(controller: number) {
+
+  function handleCcChange(controller: number, value: number) {
     if (!automation.mouseMode) return;
+    const matching = bindings.filter(
+      (b) =>
+        b.kind === "cc" &&
+        b.controller === controller &&
+        b.enabled &&
+        b.actionId &&
+        value >= (b.valueMin ?? 0) &&
+        value <= (b.valueMax ?? 127),
+    );
+    onSimulateCc?.(controller, value, matching.length > 0, matching[0]?.id ?? null);
+    for (const b of matching) {
+      void onTestAction(b.actionId!).catch(() => {});
+    }
     setTileCapture({ type: "cc", value: controller, key: ++tileCaptureKeyRef.current });
   }
   const highlightedBindingId = selectedBindingId ?? liveMatchedBindingId ?? null;
@@ -136,8 +152,7 @@ export function MappingTab({
             selectedBinding={selectedBinding}
             canMutateBindings={canMutateBindings}
             onCreateBinding={onCreateBinding}
-            onDryRunAction={onDryRunAction}
-            onTestAction={onTestAction}
+            onTestActionPreview={onTestActionPreview}
             onBindingCreated={(binding) => setSelectedBindingId(binding.id)}
             lastMidiEvent={lastMidiEvent}
             tileCapture={tileCapture}
@@ -147,7 +162,7 @@ export function MappingTab({
         {/* Column 2 — Note map + control map */}
         <div className="order-1 min-w-0 space-y-2 xl:order-2">
           <KeyboardGrid notes={notes} onNoteClick={automation.mouseMode ? handleNoteClick : undefined} />
-          <CcFaderPanel bars={bars} onCcClick={automation.mouseMode ? handleCcClick : undefined} />
+          <CcFaderPanel bars={bars} onCcChange={automation.mouseMode ? handleCcChange : undefined} />
         </div>
 
         {/* Column 3 — Active bindings + run history (stacks under center on xl, side at 2xl) */}

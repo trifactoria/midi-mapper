@@ -5,7 +5,6 @@ import {
   appStats as mockAppStats,
   automationState as mockAutomationState,
   bindings as mockBindings,
-  ccBars as mockCcBars,
   keyboardNotes as mockKeyboardNotes,
   layers as mockLayers,
   monitorEvents as mockMonitorEvents,
@@ -28,6 +27,7 @@ import type {
 import { mapAutomation, mapBindings, mapLayers, mapProfiles, mapRuns, mapStats } from "./adapters";
 import {
   v2Api,
+  type BackendActionPreviewPayload,
   type BackendActionRunResult,
   type BackendBindingCreatePayload,
   type BackendBindingPatch,
@@ -75,9 +75,11 @@ type V2ReadData = {
   clearMonitorEvents: () => void;
   setKeygrab: (enabled: boolean) => Promise<void>;
   setMouseMode: (mouseMode: boolean) => void;
-  simulateNote: (note: number, velocity?: number) => void;
+  simulateNote: (note: number, velocity?: number, matched?: boolean, matchedBindingId?: string | null) => void;
+  simulateCc: (controller: number, value: number, matched?: boolean, matchedBindingId?: string | null) => void;
   dryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   testAction: (actionId: string) => Promise<BackendActionRunResult>;
+  testActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
 };
 
 type ReadResult<T> = {
@@ -86,6 +88,8 @@ type ReadResult<T> = {
 };
 
 type DataSource = "backend" | "mock";
+
+const DEFAULT_CC_BARS: CcBar[] = Array.from({ length: 16 }, (_, index) => ({ index, value: 0 }));
 type LiveNoteState = Record<number, { active: boolean; pressed: boolean; velocity?: number; matched?: boolean }>;
 
 async function readOrFallback<T>(read: () => Promise<T>, isEmpty: (value: T) => boolean): Promise<ReadResult<T>> {
@@ -176,7 +180,7 @@ function updateCcBars(current: CcBar[], cc: number, value: number, matched: bool
     return current.map((bar, index) => (index === existingIndex ? { ...bar, value: boundedValue, color } : bar));
   }
 
-  const replacementIndex = current.findIndex((bar) => bar.value === 0);
+  const replacementIndex = current.findIndex((bar) => !bar.color);
   const next = [...current];
   next[replacementIndex >= 0 ? replacementIndex : next.length - 1] = { index: cc, value: boundedValue, color };
   return next;
@@ -185,6 +189,25 @@ function updateCcBars(current: CcBar[], cc: number, value: number, matched: bool
 const VALID_DOT_COLORS = new Set<string>(["cyan","purple","amber","orange","red","emerald","violet","rose","blue","slate"]);
 function asDotColor(color: string | undefined): NoteDotColor {
   return (color && VALID_DOT_COLORS.has(color) ? color : "cyan") as NoteDotColor;
+}
+
+const DOT_COLOR_HEX: Record<NoteDotColor, string> = {
+  cyan: "#22d3ee",
+  purple: "#c084fc",
+  amber: "#fbbf24",
+  orange: "#fb923c",
+  red: "#f87171",
+  emerald: "#34d399",
+  violet: "#a78bfa",
+  rose: "#fb7185",
+  blue: "#60a5fa",
+  slate: "#94a3b8",
+};
+
+function displayColorHex(color: string | undefined): string {
+  if (!color) return DOT_COLOR_HEX.cyan;
+  if (color.startsWith("#")) return color;
+  return DOT_COLOR_HEX[asDotColor(color)];
 }
 
 export function useV2ReadData(): V2ReadData {
@@ -200,9 +223,9 @@ export function useV2ReadData(): V2ReadData {
   const [profileSource, setProfileSource] = useState<DataSource>("mock");
   const [layerSource, setLayerSource] = useState<DataSource>("mock");
   const [dataSourceLabel, setDataSourceLabel] = useState<V2ReadData["dataSourceLabel"]>("Backend unavailable");
-  const [monitorEvents, setMonitorEvents] = useState<MidiMonitorEvent[]>(mockMonitorEvents);
+  const [monitorEvents, setMonitorEvents] = useState<MidiMonitorEvent[]>([]);
   const [liveNotes, setLiveNotes] = useState<LiveNoteState>({});
-  const [ccBars, setCcBars] = useState<CcBar[]>(mockCcBars);
+  const [ccBars, setCcBars] = useState<CcBar[]>(DEFAULT_CC_BARS);
   const [liveSourcePort, setLiveSourcePort] = useState<string | null>(null);
   const [liveLastEvent, setLiveLastEvent] = useState<string | null>(null);
   const [liveMatchedBindingId, setLiveMatchedBindingId] = useState<string | null>(null);
@@ -260,7 +283,10 @@ export function useV2ReadData(): V2ReadData {
     setProfileSource(nextProfileSource);
     setLayerSource(nextLayerSource);
     setRuns(backendReachable ? mapRuns(runResult.value ?? []) : mockRuns);
-    setAutomation(mapAutomation(automationResult.value, null, mockAutomationState));
+    setAutomation((current) => mapAutomation(automationResult.value, null, current));
+    if (!backendReachable) {
+      setMonitorEvents((current) => (current.length > 0 ? current : mockMonitorEvents));
+    }
     setDevices(deviceResult.value ?? []);
     setInputPorts(
       portResult.value ??
@@ -612,20 +638,21 @@ export function useV2ReadData(): V2ReadData {
     setAutomation((current) => ({ ...current, mouseMode }));
   }, []);
 
-  const simulateNote = useCallback((note: number, velocity = 80) => {
+  const simulateNote = useCallback((note: number, velocity = 80, matched = false, matchedBindingId: string | null = null) => {
     setLiveNotes((current) => ({
       ...current,
-      [note]: { active: true, pressed: true, velocity, matched: true },
+      [note]: { active: true, pressed: true, velocity, matched },
     }));
+    setLiveMatchedBindingId(matchedBindingId);
     const name = NOTE_NAMES[note % 12] ?? "?";
-    const octave = Math.floor(note / 12) - 2;
+    const octave = Math.floor(note / 12) - 1;
     const evt: MidiMonitorEvent = {
       id: `sim-${Date.now()}-${note}`,
       port: "Mouse",
       type: "Note On",
       channel: 1,
       value: `${name}${octave} (${note}) · vel ${velocity}`,
-      matched: true,
+      matched,
     };
     setMonitorEvents((current) => [evt, ...current].slice(0, 8));
     window.setTimeout(() => {
@@ -642,6 +669,32 @@ export function useV2ReadData(): V2ReadData {
         });
       }, 400);
     }, 500);
+  }, []);
+
+  const simulateCc = useCallback((controller: number, value: number, matched = false, matchedBindingId: string | null = null) => {
+    const boundedValue = Math.max(0, Math.min(127, Math.round(value)));
+    setCcBars((current) => updateCcBars(current, controller, boundedValue, matched));
+    setLiveMatchedBindingId(matchedBindingId);
+    setLastMidiEvent({
+      ts: Date.now() / 1000,
+      port_name: "Mouse",
+      source_port_name: "Mouse",
+      type: "control_change",
+      channel: 0,
+      effective_channel: 0,
+      cc: controller,
+      value: boundedValue,
+      matched_binding_id: matchedBindingId,
+    });
+    const evt: MidiMonitorEvent = {
+      id: `sim-cc-${Date.now()}-${controller}`,
+      port: "Mouse",
+      type: "CC",
+      channel: 1,
+      value: `CC ${controller} · ${boundedValue}`,
+      matched,
+    };
+    setMonitorEvents((current) => [evt, ...current].slice(0, 8));
   }, []);
 
   const dryRunAction = useCallback(async (actionId: string) => {
@@ -662,12 +715,18 @@ export function useV2ReadData(): V2ReadData {
     return result;
   }, [load]);
 
+  const testActionPreview = useCallback(async (payload: BackendActionPreviewPayload) => {
+    return v2Api.testActionPreview(payload);
+  }, []);
+
   const keyboardNotes = useMemo(() => {
     const noteColors = new Map<number, NoteDotColor>();
+    const noteIconColors = new Map<number, string>();
     const noteIcons = new Map<number, string>();
     for (const b of bindings) {
       if (b.kind === "note" && typeof b.note === "number") {
         noteColors.set(b.note, asDotColor(b.displayColor));
+        noteIconColors.set(b.note, displayColorHex(b.displayColor));
         if (b.icon) noteIcons.set(b.note, b.icon);
       }
     }
@@ -677,7 +736,7 @@ export function useV2ReadData(): V2ReadData {
       const mock = mockNoteMap.get(noteNum);
       const live = liveNotes[noteNum];
       const name = NOTE_NAMES[noteNum % 12] ?? "?";
-      const octave = Math.floor(noteNum / 12) - 2;
+      const octave = Math.floor(noteNum / 12) - 1;
       const bound = (profileSource === "mock" && Boolean(mock?.bound)) || boundNotes.has(noteNum);
       const bindingDotColor = noteColors.get(noteNum) ?? "cyan";
       const baseDots = profileSource === "mock" ? mock?.dots : undefined;
@@ -693,6 +752,7 @@ export function useV2ReadData(): V2ReadData {
         pressed: Boolean(live?.pressed) || Boolean(profileSource === "mock" && mock?.pressed),
         velocity: live?.velocity ?? (profileSource === "mock" ? mock?.velocity : undefined),
         icon: noteIcons.get(noteNum),
+        iconColor: noteIconColors.get(noteNum),
       };
     });
   }, [bindings, liveNotes, profileSource]);
@@ -749,7 +809,9 @@ export function useV2ReadData(): V2ReadData {
     setKeygrab,
     setMouseMode,
     simulateNote,
+    simulateCc,
     dryRunAction,
     testAction,
+    testActionPreview,
   };
 }

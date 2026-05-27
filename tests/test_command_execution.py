@@ -254,6 +254,29 @@ def test_detached_mode_succeeds_when_process_exits_zero_immediately(app_module, 
     assert result["exit_code"] == 0
 
 
+def test_working_directory_is_passed_to_subprocess(app_module, monkeypatch):
+    launched = []
+
+    class FakeProcess:
+        pid = 1234
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        launched.append(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(app_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(app_module.shutil, "which", lambda exe, path=None: f"/usr/bin/{exe}")
+
+    result = asyncio.run(app_module.safe_execute_command("echo hi", working_directory="/tmp"))
+
+    assert result["ok"] is True
+    assert launched[0]["cwd"] == "/tmp"
+
+
 @pytest.mark.anyio
 async def test_detached_mode_integration_long_running():
     """Integration: sleep in detached mode returns launched=True (still running after probe)."""

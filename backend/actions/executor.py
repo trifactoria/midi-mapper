@@ -21,6 +21,7 @@ async def safe_execute_command(
     command: str,
     timeout_ms: Optional[int] = None,
     execution_mode: str = "argv",
+    working_directory: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a command, capture stdout/stderr, and enforce a timeout.
 
@@ -46,6 +47,7 @@ async def safe_execute_command(
 
     timeout_sec = (timeout_ms if timeout_ms is not None else EXEC_TIMEOUT_MS) / 1000.0
     started_at = time.time()
+    cwd = working_directory.strip() if working_directory and working_directory.strip() else None
 
     # ── Shell mode (opt-in only) ─────────────────────────────────────────────
     if EXEC_USE_SHELL:
@@ -59,6 +61,7 @@ async def safe_execute_command(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                cwd=cwd,
             )
         except Exception as e:
             return {
@@ -138,7 +141,7 @@ async def safe_execute_command(
             }
 
     if execution_mode == "detached":
-        return await _launch_detached(resolved_exe, parts, started_at)
+        return await _launch_detached(resolved_exe, parts, started_at, cwd=cwd)
 
     try:
         env = os.environ.copy()
@@ -149,6 +152,7 @@ async def safe_execute_command(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            cwd=cwd,
         )
     except Exception as e:
         return {
@@ -234,6 +238,7 @@ async def _launch_detached(
     resolved_exe: str,
     parts: list,
     started_at: float,
+    cwd: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Launch a process detached (new session) for GUI/app-launch use cases.
 
@@ -259,6 +264,7 @@ async def _launch_detached(
             stderr=asyncio.subprocess.PIPE,
             env=env,
             start_new_session=True,
+            cwd=cwd,
         )
     except Exception as e:
         return {**base, "ok": False, "error": f"Failed to launch: {e}", "exit_code": None}

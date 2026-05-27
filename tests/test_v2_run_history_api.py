@@ -90,6 +90,84 @@ def test_dry_run_does_not_create_run(client, monkeypatch):
     assert client.get("/api/runs").json() == []
 
 
+def test_action_preview_executes_unsaved_command(monkeypatch):
+    import asyncio
+    import backend.api.actions as actions_api
+
+    calls = []
+
+    async def fake_execute(command, timeout_ms=None, execution_mode="argv", working_directory=None):
+        calls.append((command, timeout_ms, execution_mode, working_directory))
+        return {"ok": True, "stdout": "hello\n", "stderr": "", "exit_code": 0}
+
+    monkeypatch.setattr(actions_api, "safe_execute_command", fake_execute)
+    body = asyncio.run(
+        actions_api.test_action_preview(
+            actions_api.ActionPreviewIn(
+                type="command",
+                label="Preview",
+                command="echo hello",
+                working_directory="/tmp",
+                execution_mode="argv",
+                timeout_ms=1234,
+            )
+        )
+    )
+
+    assert calls == [("echo hello", 1234, "argv", "/tmp")]
+    assert_dict_contains(body, {
+        "ok": True,
+        "command": "echo hello",
+        "label": "Preview",
+        "preview": True,
+        "stdout": "hello\n",
+    })
+
+
+def test_action_preview_supports_detached_mode(monkeypatch):
+    import asyncio
+    import backend.api.actions as actions_api
+
+    calls = []
+
+    async def fake_execute(command, timeout_ms=None, execution_mode="argv", working_directory=None):
+        calls.append((command, execution_mode))
+        return {"ok": True, "launched": True, "exit_code": None}
+
+    monkeypatch.setattr(actions_api, "safe_execute_command", fake_execute)
+    body = asyncio.run(
+        actions_api.test_action_preview(
+            actions_api.ActionPreviewIn(
+                type="command",
+                command="firefox https://skillkraftz.com",
+                execution_mode="detached",
+            )
+        )
+    )
+
+    assert calls == [("firefox https://skillkraftz.com", "detached")]
+    assert body["preview"] is True
+
+
+def test_action_preview_rejects_missing_command(monkeypatch):
+    import asyncio
+    import pytest
+    import backend.api.actions as actions_api
+
+    calls = patch_executor(monkeypatch, {"ok": True})
+
+    with pytest.raises(actions_api.HTTPException) as exc:
+        asyncio.run(
+            actions_api.test_action_preview(
+                actions_api.ActionPreviewIn(type="command", command="   ")
+            )
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Action command is required"
+    assert calls == []
+
+
 def test_failed_action_test_creates_error_run(client, monkeypatch):
     _, _, binding = create_profile_layer_binding(client)
     patch_executor(

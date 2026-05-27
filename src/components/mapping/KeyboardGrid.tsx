@@ -24,14 +24,21 @@ function isSharp(midi: number) {
   return [1, 3, 6, 8, 10].includes(midi % 12);
 }
 
-function NoteIcon({ iconKey }: { iconKey: string }) {
+const NOTE_RANGES = [
+  { id: "oct--1-4", label: "Octaves -1 to 4", start: 0, end: 72 },
+  { id: "oct-0-5", label: "Octaves 0 to 5", start: 12, end: 84 },
+  { id: "oct-1-6", label: "Octaves 1 to 6", start: 24, end: 96 },
+  { id: "oct-2-7", label: "Octaves 2 to 7", start: 36, end: 108 },
+] as const;
+
+function NoteIcon({ iconKey, color }: { iconKey: string; color?: string }) {
   const entry = ICONS.find((ic) => ic.key === iconKey);
   if (!entry) return null;
   return (
-    <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2">
+    <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2" style={{ color: color ?? undefined }}>
       <svg
         viewBox="0 0 24 24"
-        className="h-2.5 w-2.5 text-white/40"
+        className={["h-2.5 w-2.5", color ? "" : "text-white/40"].join(" ")}
         fill={entry.fill ? "currentColor" : "none"}
         stroke={entry.fill ? "none" : "currentColor"}
         strokeWidth="2"
@@ -47,9 +54,9 @@ function NoteIcon({ iconKey }: { iconKey: string }) {
 }
 
 export function KeyboardGrid({ notes, onNoteClick }: Props) {
-  const [octave, setOctave] = useState(3);
-  const start = (octave + 1) * 12;
-  const visibleNotes = notes.filter((n) => n.note >= start && n.note < start + 36);
+  const [rangeId, setRangeId] = useState<(typeof NOTE_RANGES)[number]["id"]>("oct-1-6");
+  const range = NOTE_RANGES.find((item) => item.id === rangeId) ?? NOTE_RANGES[2];
+  const visibleNotes = notes.filter((n) => n.note >= range.start && n.note < range.end);
 
   return (
     <section className="rounded-md border border-white/12 bg-white/[0.038] px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.055),0_6px_22px_-8px_rgba(0,0,0,0.6)]">
@@ -67,14 +74,14 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
             <path d="M4 7h8M4 9h6M4 11h4" />
           </svg>
           <select
-            aria-label="Octave"
+            aria-label="Note range"
             className="!h-5 !rounded !border-white/10 !bg-transparent !px-0.5 !py-0 !text-[10.5px] text-white/85"
-            value={octave}
-            onChange={(e) => setOctave(Number(e.target.value))}
+            value={rangeId}
+            onChange={(e) => setRangeId(e.target.value as (typeof NOTE_RANGES)[number]["id"])}
           >
-            {[1, 2, 3, 4, 5, 6, 7].map((oct) => (
-              <option key={oct} value={oct} className="bg-zinc-900">
-                Octave {oct}
+            {NOTE_RANGES.map((item) => (
+              <option key={item.id} value={item.id} className="bg-zinc-900">
+                {item.label}
               </option>
             ))}
           </select>
@@ -146,7 +153,7 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
                 </span>
               )}
 
-              {note.icon && !note.velocity && <NoteIcon iconKey={note.icon} />}
+              {note.icon && !note.velocity && <NoteIcon iconKey={note.icon} color={note.iconColor} />}
             </button>
           );
         })}

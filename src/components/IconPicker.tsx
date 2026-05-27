@@ -6,6 +6,7 @@ import { ICONS } from "./icons";
 type Props = {
   value: string;
   onChange: (key: string) => void;
+  color?: string;
 };
 
 function IconSvg({ paths, fill }: { paths: string[]; fill?: boolean }) {
@@ -26,7 +27,7 @@ function IconSvg({ paths, fill }: { paths: string[]; fill?: boolean }) {
   );
 }
 
-export function IconPicker({ value, onChange }: Props) {
+export function IconPicker({ value, onChange, color }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const selected = ICONS.find((ic) => ic.key === value);
@@ -46,7 +47,7 @@ export function IconPicker({ value, onChange }: Props) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={[
-          "flex items-center gap-1 rounded border !px-1.5 !py-[3px] transition",
+          "flex !h-7 items-center gap-1 rounded border !px-1.5 !py-0 transition",
           open
             ? "border-cyan-300/30 bg-cyan-300/[0.08] text-cyan-100"
             : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/[0.07]",
@@ -55,7 +56,9 @@ export function IconPicker({ value, onChange }: Props) {
         title={selected?.label ?? "No icon"}
       >
         {selected ? (
-          <IconSvg paths={selected.paths} fill={selected.fill} />
+          <span style={{ color: color ?? "currentColor" }}>
+            <IconSvg paths={selected.paths} fill={selected.fill} />
+          </span>
         ) : (
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
             <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -81,7 +84,7 @@ export function IconPicker({ value, onChange }: Props) {
               </button>
             )}
           </div>
-          <div className="grid grid-cols-7 gap-0.5">
+          <div className="grid grid-cols-7 gap-1">
             {ICONS.map((ic) => (
               <button
                 key={ic.key}
@@ -89,13 +92,16 @@ export function IconPicker({ value, onChange }: Props) {
                 title={ic.label}
                 onClick={() => { onChange(ic.key); setOpen(false); }}
                 className={[
-                  "grid h-7 w-7 place-items-center rounded transition",
+                  "grid h-7 w-7 shrink-0 place-items-center rounded border !p-0 leading-none transition",
                   value === ic.key
-                    ? "bg-cyan-300/15 text-cyan-200 ring-1 ring-cyan-300/30"
-                    : "text-white/45 hover:bg-white/[0.06] hover:text-white/80",
+                    ? "border-cyan-300/35 bg-cyan-300/15 text-cyan-100 shadow-[inset_0_0_0_1px_rgba(103,232,249,0.12)]"
+                    : "border-transparent hover:bg-white/[0.06] hover:opacity-100",
                 ].join(" ")}
+                style={{ color: color ?? "#67e8f9", opacity: value === ic.key ? 1 : 0.72 }}
               >
-                <IconSvg paths={ic.paths} fill={ic.fill} />
+                <span className="grid h-4 w-4 place-items-center">
+                  <IconSvg paths={ic.paths} fill={ic.fill} />
+                </span>
               </button>
             ))}
           </div>

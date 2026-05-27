@@ -104,8 +104,9 @@ export function V2Shell() {
     setKeygrab,
     setMouseMode,
     simulateNote,
-    dryRunAction,
+    simulateCc,
     testAction,
+    testActionPreview,
   } = useV2ReadData();
   const midiUnavailable = midiStatus?.available === false || midiStatus?.degraded === true;
   const midiLabel = selectedInputPort ?? (midiUnavailable ? midiStatus?.message ?? "MIDI unavailable" : appStats.midiInput);
@@ -204,14 +205,15 @@ export function V2Shell() {
                   onEditBinding={editBinding}
                   onToggleBindingEnabled={(id) => void toggleBindingEnabled(id)}
                   onDuplicateBinding={duplicateBinding}
-                  onDryRunAction={dryRunAction}
                   onTestAction={testAction}
+                  onTestActionPreview={testActionPreview}
                   onDeleteBinding={deleteBinding}
                   onClearRuns={clearRuns}
                   onKeygrabChange={(enabled) => void setKeygrab(enabled)}
                   onMouseModeChange={(mouseMode) => setMouseMode(mouseMode)}
                   onClearEvents={clearMonitorEvents}
                   onSimulateNote={simulateNote}
+                  onSimulateCc={simulateCc}
                   selectedInputPort={selectedInputPort}
                   liveMatchedBindingId={liveMatchedBindingId}
                   lastMidiEvent={lastMidiEvent}

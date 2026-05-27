@@ -4,12 +4,40 @@ type Props = {
   bindings: V2BindingSummary[];
 };
 
+const BINDING_COLOR_HEX: Record<string, string> = {
+  cyan: "#22d3ee",
+  emerald: "#34d399",
+  violet: "#a78bfa",
+  amber: "#fbbf24",
+  rose: "#fb7185",
+  blue: "#60a5fa",
+  slate: "#94a3b8",
+  purple: "#c084fc",
+  orange: "#fb923c",
+  red: "#f87171",
+};
+
+function bindingColorHex(color: string | undefined): string | undefined {
+  if (!color) return undefined;
+  if (color.startsWith("#")) return color;
+  return BINDING_COLOR_HEX[color];
+}
+
 export function ActionsPanel({ bindings }: Props) {
+  const commandCount = bindings.filter((binding) => Boolean(binding.command)).length;
+  const enabledCount = bindings.filter((binding) => binding.enabled).length;
+
   return (
     <section className="rounded-md border border-white/10 bg-white/[0.03] p-4">
-      <div className="mb-4">
-        <h2 className="text-base font-semibold text-white">Actions</h2>
-        <p className="text-xs text-white/45">Command actions attached to bindings in the active layer.</p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-white">Actions</h2>
+          <p className="text-xs text-white/45">Commands attached to active-layer bindings. Sequencing is not shown here yet.</p>
+        </div>
+        <div className="flex shrink-0 gap-1.5 font-mono text-[10px] text-white/45">
+          <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-px">{commandCount} commands</span>
+          <span className="rounded border border-emerald-300/15 bg-emerald-300/[0.05] px-1.5 py-px">{enabledCount} enabled</span>
+        </div>
       </div>
       {bindings.length === 0 ? (
         <p className="text-[11px] text-white/30">No actions yet — add bindings from the Mapping tab.</p>
@@ -25,10 +53,10 @@ export function ActionsPanel({ bindings }: Props) {
                     {binding.triggerCondition ? ` · ${binding.triggerCondition}` : ""}
                   </div>
                 </div>
-                {binding.displayColor && (
+                {binding.displayColor && bindingColorHex(binding.displayColor) && (
                   <span
                     className="mt-0.5 h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: binding.displayColor }}
+                    style={{ backgroundColor: bindingColorHex(binding.displayColor) }}
                   />
                 )}
               </div>

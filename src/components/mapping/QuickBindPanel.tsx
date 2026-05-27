@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconPicker } from "../IconPicker";
-import type { BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
+import type { BackendActionPreviewPayload, BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
 import type { V2BindingSummary, V2MidiEventPayload } from "../v2/types";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -108,14 +108,16 @@ const BINDING_COLORS = [
   { id: "slate",   hex: "#94a3b8", label: "Slate" },
 ] as const;
 
-type BindingColorId = (typeof BINDING_COLORS)[number]["id"];
+function bindingColorHex(color: string | undefined): string {
+  if (color?.startsWith("#")) return color;
+  return BINDING_COLORS.find((c) => c.id === color)?.hex ?? "#22d3ee";
+}
 
 type Props = {
   selectedBinding?: V2BindingSummary | null;
   canMutateBindings: boolean;
   onCreateBinding: (payload: BackendBindingCreatePayload) => Promise<V2BindingSummary>;
-  onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
-  onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
+  onTestActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
   onBindingCreated?: (binding: V2BindingSummary) => void;
   lastMidiEvent?: V2MidiEventPayload | null;
   tileCapture?: TileCapture | null;
@@ -124,7 +126,7 @@ type Props = {
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 function noteName(note: number): string {
   const name = NOTE_NAMES[note % 12] ?? "Note";
-  const octave = Math.floor(note / 12) - 2;
+  const octave = Math.floor(note / 12) - 1;
   return `${name}${octave}`;
 }
 
@@ -177,20 +179,34 @@ function validateCreatePayload(
 
 function resultText(result: BackendActionRunResult | null): string | null {
   if (!result) return null;
-  if (result.summary) return `Dry run: ${result.summary}`;
+  if (result.would_execute === false) return `Preview: ${result.command ?? result.summary ?? ""}`;
   if (result.error) return `Error: ${result.error}`;
   if (result.stderr || result.stderr_preview) return `stderr: ${result.stderr ?? result.stderr_preview}`;
   if (result.stdout || result.stdout_preview) return `stdout: ${result.stdout ?? result.stdout_preview}`;
+  if (result.ok && result.command) return result.preview ? `Test ran: ${result.command}` : `Action ran: ${result.command}`;
   if (result.ok !== undefined) return result.ok ? "Action test succeeded" : "Action test failed";
   return null;
+}
+
+function resultDetail(result: BackendActionRunResult | null): React.ReactNode {
+  if (!result) return null;
+  const stdout = result.stdout ?? result.stdout_preview;
+  const stderr = result.stderr ?? result.stderr_preview;
+  if (!stdout && !stderr && !result.error) return null;
+  return (
+    <div className="mt-1.5 space-y-1 rounded border border-white/8 bg-black/25 p-2 font-mono text-[10px] leading-snug text-white/55">
+      {stdout && <pre className="max-h-20 overflow-auto whitespace-pre-wrap text-emerald-100/75">{stdout}</pre>}
+      {stderr && <pre className="max-h-20 overflow-auto whitespace-pre-wrap text-amber-100/75">{stderr}</pre>}
+      {result.error && <pre className="max-h-20 overflow-auto whitespace-pre-wrap text-rose-100/75">{result.error}</pre>}
+    </div>
+  );
 }
 
 export function QuickBindPanel({
   selectedBinding,
   canMutateBindings,
   onCreateBinding,
-  onDryRunAction,
-  onTestAction,
+  onTestActionPreview,
   onBindingCreated,
   lastMidiEvent,
   tileCapture,
@@ -205,6 +221,7 @@ export function QuickBindPanel({
   const [valueMax, setValueMax] = useState("127");
   const [command, setCommand] = useState("echo");
   const [args, setArgs] = useState("hello");
+  const [executionMode, setExecutionMode] = useState<"argv" | "detached">("argv");
   const [workingDirectory, setWorkingDirectory] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [requireArmed, setRequireArmed] = useState(true);
@@ -212,11 +229,10 @@ export function QuickBindPanel({
   const [debounceMs, setDebounceMs] = useState("20");
   const [notes, setNotes] = useState("");
   const [presetId, setPresetId] = useState("custom");
-  const [displayColor, setDisplayColor] = useState<BindingColorId>("cyan");
+  const [displayColor, setDisplayColor] = useState<string>("cyan");
   const [displayIcon, setDisplayIcon] = useState("");
   const [colorOpen, setColorOpen] = useState(false);
   const colorPickerRef = useRef<HTMLDivElement>(null);
-  const [lastActionId, setLastActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [runResult, setRunResult] = useState<BackendActionRunResult | null>(null);
   const [captureMode, setCaptureMode] = useState<"idle" | "waiting">("idle");
@@ -239,10 +255,12 @@ export function QuickBindPanel({
     }
     setCommand(selectedBinding.command || selectedBinding.actionLabel || "echo");
     setArgs("");
+    setExecutionMode(selectedBinding.executionMode === "detached" ? "detached" : "argv");
     setEnabled(selectedBinding.enabled);
     setRequireArmed(selectedBinding.requireArmed);
+    setDisplayColor(selectedBinding.displayColor ?? "cyan");
+    setDisplayIcon(selectedBinding.icon ?? "");
     setPresetId("custom");
-    setLastActionId(selectedBinding.actionId ?? null);
     setRunResult(null);
   }, [selectedBinding]);
 
@@ -328,10 +346,10 @@ export function QuickBindPanel({
     if (!preset) return;
     setCommand(preset.command);
     setArgs(preset.args);
+    setExecutionMode(preset.execution_mode ?? "argv");
   }
 
   const activePreset = ALL_PRESETS.find((p) => p.id === presetId);
-  const actionId = selectedBinding?.actionId ?? lastActionId;
   const commandLine = useMemo(() => [command.trim(), args.trim()].filter(Boolean).join(" "), [args, command]);
   const effectiveLabel = presetId !== "custom" && activePreset
     ? activePreset.label
@@ -341,6 +359,10 @@ export function QuickBindPanel({
     setRunResult(null);
     if (!canMutateBindings) {
       setMessage("No active layer — create or select a layer first");
+      return;
+    }
+    if (!command.trim()) {
+      setMessage("Command is required");
       return;
     }
     const validationError = validateCreatePayload(
@@ -378,7 +400,7 @@ export function QuickBindPanel({
           label: effectiveLabel,
           command: commandLine,
           working_directory: workingDirectory.trim() || undefined,
-          execution_mode: activePreset?.execution_mode ?? "argv",
+          execution_mode: executionMode,
         },
         enabled: enabled ? 1 : 0,
         require_armed: requireArmed ? 1 : 0,
@@ -388,7 +410,6 @@ export function QuickBindPanel({
         display_color: displayColor,
         display_icon: displayIcon || undefined,
       });
-      setLastActionId(created.actionId ?? null);
       setMessage("Binding created");
       onBindingCreated?.(created);
     } catch (error) {
@@ -396,30 +417,39 @@ export function QuickBindPanel({
     }
   }
 
-  async function dryRunAction() {
+  function actionPreviewPayload(): BackendActionPreviewPayload | null {
     setMessage(null);
     setRunResult(null);
-    if (!actionId) {
-      setMessage("No action yet — create a binding first");
-      return;
+    if (!command.trim()) {
+      setMessage("Command is required");
+      return null;
     }
-    try {
-      const result = await onDryRunAction(actionId);
-      setRunResult(result);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Dry run failed");
-    }
+    return {
+      type: "command",
+      label: effectiveLabel,
+      command: commandLine,
+      working_directory: workingDirectory.trim() || undefined,
+      execution_mode: executionMode,
+    };
+  }
+
+  function previewCommand() {
+    const payload = actionPreviewPayload();
+    if (!payload) return;
+    setRunResult({
+      ok: true,
+      command: payload.command,
+      label: payload.label,
+      summary: payload.command,
+      would_execute: false,
+    });
   }
 
   async function testAction() {
-    setMessage(null);
-    setRunResult(null);
-    if (!actionId) {
-      setMessage("No action yet — create a binding first");
-      return;
-    }
+    const payload = actionPreviewPayload();
+    if (!payload) return;
     try {
-      const result = await onTestAction(actionId);
+      const result = await onTestActionPreview(payload);
       setRunResult(result);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Test action failed");
@@ -434,7 +464,7 @@ export function QuickBindPanel({
           <SectionLabel>Quick Bind</SectionLabel>
           {/* Color + icon selectors */}
           <div className="flex items-center gap-1.5">
-            <IconPicker value={displayIcon} onChange={setDisplayIcon} />
+            <IconPicker value={displayIcon} onChange={setDisplayIcon} color={bindingColorHex(displayColor)} />
             <div ref={colorPickerRef} className="relative">
             <button
               type="button"
@@ -444,7 +474,7 @@ export function QuickBindPanel({
             >
               <span
                 className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: BINDING_COLORS.find((c) => c.id === displayColor)?.hex ?? "#22d3ee" }}
+                style={{ backgroundColor: bindingColorHex(displayColor) }}
               />
               <svg viewBox="0 0 10 6" className="h-1.5 w-1.5" fill="currentColor">
                 <path d="M0 0l5 6 5-6H0z" />
@@ -565,7 +595,7 @@ export function QuickBindPanel({
             <input
               className="w-full font-mono !text-[11.5px]"
               value={command}
-              onChange={(event) => { setCommand(event.target.value); setPresetId("custom"); }}
+              onChange={(event) => { setCommand(event.target.value); setPresetId("custom"); setExecutionMode("argv"); }}
             />
           </label>
         </div>
@@ -575,7 +605,7 @@ export function QuickBindPanel({
           <input
             className="w-full font-mono !text-[11.5px]"
             value={args}
-            onChange={(event) => { setArgs(event.target.value); setPresetId("custom"); }}
+            onChange={(event) => setArgs(event.target.value)}
           />
         </label>
         {activePreset?.hint && (
@@ -597,13 +627,14 @@ export function QuickBindPanel({
           </button>
           <button
             type="button"
-            onClick={() => void dryRunAction()}
+            onClick={previewCommand}
             className="inline-flex !h-7 items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] !px-2.5 !text-[10.5px] uppercase tracking-[0.10em] font-semibold text-white/75 hover:bg-white/[0.06]"
           >
-            Dry Run
+            Preview Command
           </button>
         </div>
         {resultText(runResult) && <div className="mt-1.5 truncate font-mono text-[10.5px] text-white/55">{resultText(runResult)}</div>}
+        {resultDetail(runResult)}
       </section>
 
       {/* Binding Options */}

@@ -99,6 +99,7 @@ export type KeyboardNote = {
   velocity?: number;
   dots?: NoteDotColor[];
   icon?: string;
+  iconColor?: string;
 };
 
 export type CcControl = {
