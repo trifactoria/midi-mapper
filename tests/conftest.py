@@ -1,7 +1,9 @@
 import importlib
+import asyncio
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 
@@ -128,9 +130,47 @@ def app_module(tmp_path, monkeypatch):
     return module
 
 
-@pytest.fixture
-def client(app_module):
-    from fastapi.testclient import TestClient
+class LocalASGIClient:
+    def __init__(self, app):
+        self.app = app
 
-    with TestClient(app_module.app) as test_client:
-        yield test_client
+    def request(self, method: str, url: str, **kwargs):
+        async def run_request():
+            transport = httpx.ASGITransport(app=self.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+                response = await async_client.request(method, url, **kwargs)
+                await response.aread()
+                return response
+
+        return asyncio.run(run_request())
+
+    def get(self, url: str, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+    def patch(self, url: str, **kwargs):
+        return self.request("PATCH", url, **kwargs)
+
+    def put(self, url: str, **kwargs):
+        return self.request("PUT", url, **kwargs)
+
+    def delete(self, url: str, **kwargs):
+        return self.request("DELETE", url, **kwargs)
+
+
+@pytest.fixture
+def client(app_module, monkeypatch):
+    async def idle_midi_pump():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(app_module, "midi_pump", idle_midi_pump)
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(app_module._startup())
+        yield LocalASGIClient(app_module.app)
+    finally:
+        loop.run_until_complete(app_module._shutdown())
+        loop.close()

@@ -39,6 +39,7 @@ def create_exportable_profile(client):
             "display_label": "Open editor",
             "display_color": "#333333",
             "display_emoji": "*",
+            "display_icon": "terminal",
         },
     ).json()
     cc_binding = client.post(
@@ -85,6 +86,8 @@ def test_export_profile_includes_expected_nested_data(client):
     exported = client.get(f"/api/profiles/{profile['id']}/export").json()
 
     assert exported["schema_version"] == 1
+    assert exported["app"] == "midi-mapper"
+    assert exported["export_version"] == 1
     assert exported["kind"] == "midi-mapper-v2-profile"
     assert exported["profile"] == {
         "name": "Studio Profile",
@@ -100,6 +103,10 @@ def test_export_profile_includes_expected_nested_data(client):
     assert exported["triggers"][1]["value_max"] == 96
     assert exported["actions"][0]["type"] == "command"
     assert exported["actions"][0]["command"] == "code ."
+    assert exported["actions"][0]["execution_mode"] == "argv"
+    assert exported["actions"][0]["timeout_ms"] == 1000
+    assert exported["bindings_v2"][0]["display_icon"] == "terminal"
+    assert exported["bindings_v2"][0]["debounce_ms"] == 250
 
 
 def test_import_creates_equivalent_profile_with_fresh_ids(client):
@@ -146,6 +153,25 @@ def test_profile_import_rejects_invalid_schema_version(client):
     assert response.json()["detail"] == "Unsupported profile export schema_version"
 
 
+def test_profile_import_rejects_invalid_shape(client):
+    response = client.post(
+        "/api/profiles/import",
+        json={
+            "payload": {
+                "schema_version": 1,
+                "profile": {"name": "Bad"},
+                "layers": {},
+                "triggers": [],
+                "actions": [],
+                "bindings_v2": [],
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "layers must be a list"
+
+
 def test_profile_import_rejects_unsupported_action_type(client):
     profile, _, _ = create_exportable_profile(client)
     exported = client.get(f"/api/profiles/{profile['id']}/export").json()
@@ -155,3 +181,13 @@ def test_profile_import_rejects_unsupported_action_type(client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Only command actions are supported"
+
+
+def test_profile_import_preserves_display_icon(client):
+    profile, _, _ = create_exportable_profile(client)
+    exported = client.get(f"/api/profiles/{profile['id']}/export").json()
+
+    imported = client.post("/api/profiles/import", json={"payload": exported}).json()
+    round_trip = client.get(f"/api/profiles/{imported['profile_id']}/export").json()
+
+    assert round_trip["bindings_v2"][0]["display_icon"] == "terminal"

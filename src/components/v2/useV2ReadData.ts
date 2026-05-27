@@ -33,6 +33,8 @@ import {
   type BackendBindingPatch,
   type BackendDevice,
   type BackendPort,
+  type BackendProfileExport,
+  type BackendProfileImportResult,
   type BackendMidiStatus,
   WS_EVENTS_URL,
 } from "./api";
@@ -72,6 +74,8 @@ type V2ReadData = {
   deleteBinding: (bindingId: string) => Promise<void>;
   deleteProfile: (profileId: string) => Promise<void>;
   deleteLayer: (layerId: string) => Promise<void>;
+  exportProfile: (profileId: string) => Promise<BackendProfileExport>;
+  importProfile: (payload: BackendProfileExport) => Promise<BackendProfileImportResult>;
   clearMonitorEvents: () => void;
   setKeygrab: (enabled: boolean) => Promise<void>;
   setMouseMode: (mouseMode: boolean) => void;
@@ -620,6 +624,18 @@ export function useV2ReadData(): V2ReadData {
     await load({ quiet: true });
   }, [layerSource, load]);
 
+  const exportProfile = useCallback(async (profileId: string) => {
+    const backendId = numericBackendId(profileId);
+    if (!backendId) throw new Error("Real backend profile required for export");
+    return v2Api.exportProfile(backendId);
+  }, []);
+
+  const importProfile = useCallback(async (payload: BackendProfileExport) => {
+    const result = await v2Api.importProfile(payload);
+    await load({ quiet: true });
+    return result;
+  }, [load]);
+
   const clearMonitorEvents = useCallback(() => {
     setMonitorEvents([]);
     setLiveMatchedBindingId(null);
@@ -805,6 +821,8 @@ export function useV2ReadData(): V2ReadData {
     deleteBinding,
     deleteProfile,
     deleteLayer,
+    exportProfile,
+    importProfile,
     clearMonitorEvents,
     setKeygrab,
     setMouseMode,

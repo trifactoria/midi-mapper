@@ -11,6 +11,27 @@ export type BackendProfile = {
   binding_count?: number | null;
 };
 
+export type BackendProfileExport = {
+  app?: string;
+  export_version?: number;
+  schema_version: number;
+  kind: "midi-mapper-v2-profile" | string;
+  profile: {
+    name: string;
+    description?: string;
+  };
+  layers: unknown[];
+  bindings_v2: unknown[];
+  triggers: unknown[];
+  actions: unknown[];
+};
+
+export type BackendProfileImportResult = {
+  ok: boolean;
+  profile_id: number | string;
+  profile: BackendProfile;
+};
+
 export type BackendLayer = {
   id: number | string;
   name?: string | null;
@@ -226,7 +247,12 @@ async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`POST ${path} failed: ${response.status}`);
+    let detail: string | undefined;
+    try {
+      const parsed = await response.json() as { detail?: string };
+      if (typeof parsed?.detail === "string") detail = parsed.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail ?? `POST ${path} failed: ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -249,6 +275,9 @@ async function apiDelete<T>(path: string): Promise<T> {
 
 export const v2Api = {
   profiles: () => apiGet<BackendProfile[]>("/api/profiles"),
+  exportProfile: (profileId: string) => apiGet<BackendProfileExport>(`/api/profiles/${profileId}/export`),
+  importProfile: (payload: BackendProfileExport) =>
+    apiPost<BackendProfileImportResult>("/api/profiles/import", { payload }),
   layers: (profileId: string) => apiGet<BackendLayer[]>(`/api/profiles/${profileId}/layers`),
   bindings: (layerId: string) => apiGet<BackendBinding[]>(`/api/layers/${layerId}/bindings`),
   runs: () => apiGet<BackendRun[]>("/api/runs"),

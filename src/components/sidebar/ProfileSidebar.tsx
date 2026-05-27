@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ConfirmDialog } from "../ConfirmDialog";
+import type { BackendProfileExport, BackendProfileImportResult } from "../v2/api";
 import type { V2LayerSummary, V2ProfileSummary } from "../v2/types";
 
 type Props = {
@@ -13,6 +14,8 @@ type Props = {
   onRenameLayer?: (layerId: string, name: string) => Promise<void>;
   onDeleteProfile?: (profileId: string) => Promise<void>;
   onDeleteLayer?: (layerId: string) => Promise<void>;
+  onExportProfile?: (profileId: string) => Promise<BackendProfileExport>;
+  onImportProfile?: (payload: BackendProfileExport) => Promise<BackendProfileImportResult>;
 };
 
 type EditTarget = { type: "profile" | "layer"; id: string; draft: string } | null;
@@ -67,10 +70,16 @@ export function ProfileSidebar({
   onRenameLayer,
   onDeleteProfile,
   onDeleteLayer,
+  onExportProfile,
+  onImportProfile,
 }: Props) {
   const [editing, setEditing] = useState<EditTarget>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferMessage, setTransferMessage] = useState<string | null>(null);
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function startEdit(type: "profile" | "layer", id: string, currentName: string) {
     setEditing({ type, id, draft: currentName });
@@ -101,6 +110,63 @@ export function ProfileSidebar({
   async function handleCreateLayer() {
     const newId = await onCreateLayer?.();
     if (newId) startEdit("layer", newId, "New Layer");
+  }
+
+  function activeProfile() {
+    return profiles.find((profile) => profile.active) ?? profiles[0] ?? null;
+  }
+
+  async function handleExportProfile() {
+    const profile = activeProfile();
+    if (!profile || !onExportProfile) return;
+    setTransferError(null);
+    setTransferMessage(null);
+    try {
+      const payload = await onExportProfile(profile.id);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeName = (payload.profile?.name || profile.name || "profile")
+        .trim()
+        .replace(/[^a-z0-9._-]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .toLowerCase() || "profile";
+      link.href = url;
+      link.download = `${safeName}.midi-mapper-profile.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setTransferMessage(`Exported ${profile.name}`);
+      setTransferOpen(false);
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : "Export failed");
+    }
+  }
+
+  async function handleImportFile(file: File | undefined) {
+    if (!file || !onImportProfile) return;
+    setTransferError(null);
+    setTransferMessage(null);
+    try {
+      const text = await file.text();
+      let payload: BackendProfileExport;
+      try {
+        payload = JSON.parse(text) as BackendProfileExport;
+      } catch {
+        throw new Error("Import file is not valid JSON");
+      }
+      if (payload?.kind !== "midi-mapper-v2-profile" || payload.schema_version !== 1) {
+        throw new Error("Import file is not a supported midi-mapper v2 profile");
+      }
+      const result = await onImportProfile(payload);
+      setTransferMessage(`Imported ${result.profile?.name ?? "profile"}`);
+      setTransferOpen(false);
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   }
 
   const rowBase = "group flex w-full items-center gap-2 rounded !px-2 !py-1 text-left transition";
@@ -296,15 +362,50 @@ export function ProfileSidebar({
         </div>
       )}
       <div className="space-y-1.5 border-t border-white/10 px-2.5 py-2.5">
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] !px-2 !py-1.5 text-left !text-[12px] text-white/75 hover:bg-white/[0.06]"
-        >
-          <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <path d="M8 2.5v8m0 0l-2.5-2.5M8 10.5l2.5-2.5M3 13.5h10" />
-          </svg>
-          Import / Export
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setTransferOpen((open) => !open)}
+            className="flex w-full items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] !px-2 !py-1.5 text-left !text-[12px] text-white/75 hover:bg-white/[0.06]"
+          >
+            <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M8 2.5v8m0 0l-2.5-2.5M8 10.5l2.5-2.5M3 13.5h10" />
+            </svg>
+            Import / Export
+          </button>
+          {transferOpen && (
+            <div className="absolute bottom-8 left-0 right-0 z-40 rounded-md border border-white/12 bg-zinc-950 p-1.5 shadow-xl">
+              <button
+                type="button"
+                onClick={() => void handleExportProfile()}
+                disabled={!onExportProfile || profiles.length === 0}
+                className="block w-full rounded !px-2 !py-1.5 text-left !text-[11.5px] text-white/75 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:text-white/25"
+              >
+                Export active profile
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!onImportProfile}
+                className="block w-full rounded !px-2 !py-1.5 text-left !text-[11.5px] text-white/75 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:text-white/25"
+              >
+                Import profile JSON
+              </button>
+            </div>
+          )}
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(event) => void handleImportFile(event.target.files?.[0])}
+        />
+        {(transferMessage || transferError) && (
+          <div className={["px-1 text-[10.5px] leading-tight", transferError ? "text-rose-200/80" : "text-emerald-200/75"].join(" ")}>
+            {transferError ?? transferMessage}
+          </div>
+        )}
         <div className="px-1 text-[9.5px] uppercase tracking-[0.18em] text-white/30">v0.2.0</div>
       </div>
 

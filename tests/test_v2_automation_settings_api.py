@@ -77,9 +77,9 @@ def test_v2_binding_require_armed_remains_stored_with_automation_setting(client,
         ).fetchone()[0] == 0
 
 
-def test_matching_mode_defaults_to_legacy_and_can_be_changed(client):
+def test_matching_mode_defaults_to_v2_and_can_be_changed(client):
     assert client.get("/api/settings/matching").json() == {
-        "matching_mode": "legacy",
+        "matching_mode": "v2",
         "source": "default",
     }
 

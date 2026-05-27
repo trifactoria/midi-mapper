@@ -100,6 +100,8 @@ export function V2Shell() {
     deleteBinding,
     deleteProfile,
     deleteLayer,
+    exportProfile,
+    importProfile,
     clearMonitorEvents,
     setKeygrab,
     setMouseMode,
@@ -158,6 +160,8 @@ export function V2Shell() {
               onRenameLayer={renameLayer}
               onDeleteProfile={deleteProfile}
               onDeleteLayer={deleteLayer}
+              onExportProfile={exportProfile}
+              onImportProfile={importProfile}
             />
           </div>
 

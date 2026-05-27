@@ -62,6 +62,13 @@ def _require_command_action(action: Dict[str, Any]) -> None:
         raise HTTPException(status_code=400, detail="Only command actions are supported")
 
 
+def _require_list(payload: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail=f"{key} must be a list")
+    return value
+
+
 @router.get("/api/profiles")
 async def list_profiles() -> List[Dict[str, Any]]:
     rows = await db_fetchall(
@@ -112,10 +119,12 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Unsupported profile export schema_version")
 
     profile_data = payload.get("profile") or {}
-    layers_data = payload.get("layers") or []
-    triggers_data = payload.get("triggers") or []
-    actions_data = payload.get("actions") or []
-    bindings_data = payload.get("bindings_v2") or []
+    if not isinstance(profile_data, dict):
+        raise HTTPException(status_code=400, detail="profile must be an object")
+    layers_data = _require_list(payload, "layers")
+    triggers_data = _require_list(payload, "triggers")
+    actions_data = _require_list(payload, "actions")
+    bindings_data = _require_list(payload, "bindings_v2")
 
     name = _clean_name(profile_data.get("name", "Imported Profile"))
     description = profile_data.get("description", "")
@@ -255,9 +264,10 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                   notes,
                   display_label,
                   display_color,
-                  display_emoji
+                  display_emoji,
+                  display_icon
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     profile_id,
@@ -271,6 +281,7 @@ async def import_profile(data: ProfileImportIn) -> Dict[str, Any]:
                     binding.get("display_label", ""),
                     binding.get("display_color"),
                     binding.get("display_emoji", ""),
+                    binding.get("display_icon", ""),
                 ),
             )
 
@@ -309,6 +320,7 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
           b.display_label,
           b.display_color,
           b.display_emoji,
+          b.display_icon,
           t.event_type,
           t.channel,
           t.note,
@@ -405,9 +417,13 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
             "display_label": row["display_label"],
             "display_color": row["display_color"],
             "display_emoji": row["display_emoji"],
+            "display_icon": row["display_icon"],
+            "debounce_ms": row["cooldown_ms"],
         })
 
     return {
+        "app": "midi-mapper",
+        "export_version": 1,
         "schema_version": 1,
         "kind": "midi-mapper-v2-profile",
         "profile": {
