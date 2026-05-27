@@ -30,6 +30,7 @@ import {
   v2Api,
   type BackendActionRunResult,
   type BackendBindingCreatePayload,
+  type BackendBindingPatch,
   type BackendDevice,
   type BackendPort,
   type BackendMidiStatus,
@@ -65,7 +66,16 @@ type V2ReadData = {
   activateLayer: (layerId: string) => Promise<void>;
   canMutateBindings: boolean;
   createBinding: (payload: BackendBindingCreatePayload) => Promise<V2BindingSummary>;
+  editBinding: (bindingId: string, patch: BackendBindingPatch) => Promise<void>;
+  toggleBindingEnabled: (bindingId: string) => Promise<void>;
+  duplicateBinding: (bindingId: string) => Promise<V2BindingSummary | null>;
   deleteBinding: (bindingId: string) => Promise<void>;
+  deleteProfile: (profileId: string) => Promise<void>;
+  deleteLayer: (layerId: string) => Promise<void>;
+  clearMonitorEvents: () => void;
+  setKeygrab: (enabled: boolean) => Promise<void>;
+  setMouseMode: (mouseMode: boolean) => void;
+  simulateNote: (note: number, velocity?: number) => void;
   dryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   testAction: (actionId: string) => Promise<BackendActionRunResult>;
 };
@@ -529,6 +539,37 @@ export function useV2ReadData(): V2ReadData {
     return mapped;
   }, [activeLayerBackendId, layers, load]);
 
+  const toggleBindingEnabled = useCallback(async (bindingId: string) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return;
+    const binding = bindings.find((b) => b.id === bindingId);
+    if (!binding) return;
+    const newEnabled: 0 | 1 = binding.enabled ? 0 : 1;
+    setBindings((current) =>
+      current.map((b) => (b.id === bindingId ? { ...b, enabled: !b.enabled } : b))
+    );
+    try {
+      await v2Api.patchBinding(backendId, { enabled: newEnabled });
+    } catch {
+      await load({ quiet: true });
+    }
+  }, [bindings, load]);
+
+  const editBinding = useCallback(async (bindingId: string, patch: BackendBindingPatch): Promise<void> => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) throw new Error("Real backend binding required");
+    await v2Api.patchBinding(backendId, patch);
+    await load({ quiet: true });
+  }, [load]);
+
+  const duplicateBinding = useCallback(async (bindingId: string): Promise<V2BindingSummary | null> => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) return null;
+    const created = await v2Api.duplicateBinding(backendId);
+    await load({ quiet: true });
+    return mapBindings([created], layers)[0] ?? null;
+  }, [layers, load]);
+
   const deleteBinding = useCallback(async (bindingId: string) => {
     const backendId = numericBackendId(bindingId);
     if (!backendId) {
@@ -538,6 +579,70 @@ export function useV2ReadData(): V2ReadData {
     await v2Api.deleteBinding(backendId);
     await load({ quiet: true });
   }, [load]);
+
+  const deleteProfile = useCallback(async (profileId: string) => {
+    const backendId = profileSource === "backend" ? numericBackendId(profileId) : null;
+    if (!backendId) return;
+    await v2Api.deleteProfile(backendId);
+    await load({ quiet: true });
+  }, [load, profileSource]);
+
+  const deleteLayer = useCallback(async (layerId: string) => {
+    const backendId = layerSource === "backend" ? numericBackendId(layerId) : null;
+    if (!backendId) return;
+    await v2Api.deleteLayer(backendId);
+    await load({ quiet: true });
+  }, [layerSource, load]);
+
+  const clearMonitorEvents = useCallback(() => {
+    setMonitorEvents([]);
+    setLiveMatchedBindingId(null);
+  }, []);
+
+  const setKeygrab = useCallback(async (enabled: boolean) => {
+    setAutomation((current) => ({ ...current, keygrab: enabled }));
+    try {
+      await v2Api.setKeygrab(enabled);
+    } catch {
+      setAutomation((current) => ({ ...current, keygrab: !enabled }));
+    }
+  }, []);
+
+  const setMouseMode = useCallback((mouseMode: boolean) => {
+    setAutomation((current) => ({ ...current, mouseMode }));
+  }, []);
+
+  const simulateNote = useCallback((note: number, velocity = 80) => {
+    setLiveNotes((current) => ({
+      ...current,
+      [note]: { active: true, pressed: true, velocity, matched: true },
+    }));
+    const name = NOTE_NAMES[note % 12] ?? "?";
+    const octave = Math.floor(note / 12) - 2;
+    const evt: MidiMonitorEvent = {
+      id: `sim-${Date.now()}-${note}`,
+      port: "Mouse",
+      type: "Note On",
+      channel: 1,
+      value: `${name}${octave} (${note}) · vel ${velocity}`,
+      matched: true,
+    };
+    setMonitorEvents((current) => [evt, ...current].slice(0, 8));
+    window.setTimeout(() => {
+      setLiveNotes((current) => {
+        const next = { ...current };
+        if (next[note]?.pressed) next[note] = { ...next[note], pressed: false };
+        return next;
+      });
+      window.setTimeout(() => {
+        setLiveNotes((current) => {
+          const next = { ...current };
+          delete next[note];
+          return next;
+        });
+      }, 400);
+    }, 500);
+  }, []);
 
   const dryRunAction = useCallback(async (actionId: string) => {
     const backendId = numericBackendId(actionId);
@@ -559,28 +664,35 @@ export function useV2ReadData(): V2ReadData {
 
   const keyboardNotes = useMemo(() => {
     const noteColors = new Map<number, NoteDotColor>();
+    const noteIcons = new Map<number, string>();
     for (const b of bindings) {
       if (b.kind === "note" && typeof b.note === "number") {
         noteColors.set(b.note, asDotColor(b.displayColor));
+        if (b.icon) noteIcons.set(b.note, b.icon);
       }
     }
     const boundNotes = new Set(noteColors.keys());
-    return mockKeyboardNotes.map((note) => {
-      const live = liveNotes[note.note];
-      const bound = (profileSource === "mock" && note.bound) || boundNotes.has(note.note);
-      const bindingDotColor = noteColors.get(note.note) ?? "cyan";
-      // When backend data is active, ignore mock pre-set dots — derive everything from real bindings.
-      const baseDots = profileSource === "mock" ? note.dots : undefined;
+    const mockNoteMap = new Map(mockKeyboardNotes.map((n) => [n.note, n]));
+    return Array.from({ length: 128 }, (_, noteNum) => {
+      const mock = mockNoteMap.get(noteNum);
+      const live = liveNotes[noteNum];
+      const name = NOTE_NAMES[noteNum % 12] ?? "?";
+      const octave = Math.floor(noteNum / 12) - 2;
+      const bound = (profileSource === "mock" && Boolean(mock?.bound)) || boundNotes.has(noteNum);
+      const bindingDotColor = noteColors.get(noteNum) ?? "cyan";
+      const baseDots = profileSource === "mock" ? mock?.dots : undefined;
       const dots: KeyboardNote["dots"] = bound && !baseDots?.length ? [bindingDotColor] : baseDots;
       const nextDots: KeyboardNote["dots"] =
         live?.matched && dots && !dots.includes("emerald") ? [...dots, "emerald"] : live?.matched && !dots ? ["emerald"] : dots;
       return {
-        ...note,
+        note: noteNum,
+        label: `${name}${octave}`,
         bound,
         dots: nextDots,
-        active: Boolean(live?.active) || Boolean(profileSource === "mock" && note.active),
-        pressed: Boolean(live?.pressed) || Boolean(profileSource === "mock" && note.pressed),
-        velocity: live?.velocity ?? (profileSource === "mock" ? note.velocity : undefined),
+        active: Boolean(live?.active) || Boolean(profileSource === "mock" && mock?.active),
+        pressed: Boolean(live?.pressed) || Boolean(profileSource === "mock" && mock?.pressed),
+        velocity: live?.velocity ?? (profileSource === "mock" ? mock?.velocity : undefined),
+        icon: noteIcons.get(noteNum),
       };
     });
   }, [bindings, liveNotes, profileSource]);
@@ -627,7 +739,16 @@ export function useV2ReadData(): V2ReadData {
     activateLayer,
     canMutateBindings,
     createBinding,
+    editBinding,
+    toggleBindingEnabled,
+    duplicateBinding,
     deleteBinding,
+    deleteProfile,
+    deleteLayer,
+    clearMonitorEvents,
+    setKeygrab,
+    setMouseMode,
+    simulateNote,
     dryRunAction,
     testAction,
   };

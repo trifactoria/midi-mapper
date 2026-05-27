@@ -9,6 +9,7 @@ type Props = {
   selectedInputPort?: string | null;
   onAutomationArmedChange?: (armed: boolean) => void;
   onSelectedInputPortChange?: (portName: string | null) => void;
+  onSettingsClick?: () => void;
 };
 
 function Switch({ on, size = "md" }: { on: boolean; size?: "sm" | "md" }) {
@@ -37,15 +38,17 @@ function Switch({ on, size = "md" }: { on: boolean; size?: "sm" | "md" }) {
   );
 }
 
-function ToggleLine({ label, on }: { label: string; on: boolean }) {
+function ToggleLine({ label, on, onClick }: { label: string; on: boolean; onClick?: () => void }) {
   return (
     <button
       type="button"
+      onClick={onClick}
       className={[
         "flex !h-8 items-center gap-2 rounded-md border !px-2.5 !text-[10.5px] uppercase tracking-[0.10em]",
         on
           ? "border-white/12 bg-white/[0.04] text-white/85"
           : "border-white/10 bg-white/[0.02] text-white/55",
+        onClick ? "cursor-pointer hover:opacity-80" : "cursor-default",
       ].join(" ")}
       aria-pressed={on}
     >
@@ -67,6 +70,7 @@ export function AutomationTopbar({
   selectedInputPort,
   onAutomationArmedChange,
   onSelectedInputPortChange,
+  onSettingsClick,
 }: Props) {
   const selectedValue = selectedInputPort ?? "";
   const hasPorts = inputPorts.length > 0;
@@ -142,11 +146,9 @@ export function AutomationTopbar({
           </select>
         </label>
 
-        <ToggleLine label="Mouse Mode" on={state.mouseMode} />
-        <ToggleLine label="Live Console" on={state.liveConsole} />
-
         <button
           type="button"
+          onClick={onSettingsClick}
           className="grid !h-8 !w-8 place-items-center rounded-md border border-white/10 bg-white/[0.03] !p-0 text-white/70 hover:bg-white/[0.06]"
           aria-label="Settings"
           title="Settings"

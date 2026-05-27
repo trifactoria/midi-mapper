@@ -7,6 +7,19 @@ import pytest
 
 class FakeProcess:
     pid = 4321
+    returncode = 0
+
+    async def communicate(self):
+        return (b"", b"")
+
+    async def wait(self):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
 
 
 def test_shell_execution_is_disabled_by_default(tmp_path, monkeypatch):
@@ -103,3 +116,163 @@ def test_empty_command_is_rejected(app_module):
 
     assert result["ok"] is False
     assert result["error"] == "Empty command"
+
+
+# ── Integration tests (real subprocesses) ────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_successful_command_captures_stdout():
+    from backend.actions.executor import safe_execute_command
+
+    result = await safe_execute_command("echo hello")
+
+    assert result["ok"] is True
+    assert result["exit_code"] == 0
+    assert "hello" in result["stdout"]
+    assert result["stderr"] == ""
+
+
+@pytest.mark.anyio
+async def test_failing_command_captures_exit_code_and_stderr():
+    from backend.actions.executor import safe_execute_command
+
+    # sh -c 'exit 42' exits with code 42 without needing external binaries
+    result = await safe_execute_command("sh -c 'exit 42'")
+
+    assert result["ok"] is False
+    assert result["exit_code"] == 42
+
+
+@pytest.mark.anyio
+async def test_timeout_terminates_long_running_process():
+    from backend.actions.executor import safe_execute_command
+
+    result = await safe_execute_command("sleep 30", timeout_ms=150)
+
+    assert result["ok"] is False
+    assert result["exit_code"] is None
+    assert "timeout" in result["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_invalid_command_returns_useful_error(app_module):
+    from backend.actions.executor import safe_execute_command
+
+    result = await safe_execute_command("definitely-nonexistent-command-xyz")
+
+    assert result["ok"] is False
+    assert "not found" in result["error"].lower()
+
+
+@pytest.mark.anyio
+async def test_stdout_and_stderr_are_captured_separately():
+    from backend.actions.executor import safe_execute_command
+
+    # Write to both stdout and stderr, exit with failure
+    result = await safe_execute_command("sh -c 'echo out; echo err >&2; exit 1'")
+
+    assert result["exit_code"] == 1
+    assert "out" in result["stdout"]
+    assert "err" in result["stderr"]
+
+
+# ── Detached mode tests ───────────────────────────────────────────────────────
+
+def test_detached_mode_uses_start_new_session(app_module, monkeypatch):
+    """Detached mode must pass start_new_session=True to subprocess."""
+    launched = []
+
+    class FakeDetachedProcess:
+        pid = 9999
+        returncode = None
+        stderr = None
+
+        async def wait(self):
+            # Simulate a long-running process (never returns within probe)
+            await asyncio.sleep(10)
+            return 0
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        launched.append(kwargs)
+        return FakeDetachedProcess()
+
+    monkeypatch.setattr(app_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(app_module.shutil, "which", lambda exe, path=None: f"/usr/bin/{exe}")
+
+    result = asyncio.run(app_module.safe_execute_command("firefox", execution_mode="detached"))
+
+    assert result["ok"] is True
+    assert result.get("launched") is True
+    assert result["pid"] == 9999
+    assert launched[0].get("start_new_session") is True
+
+
+def test_detached_mode_reports_failure_when_process_exits_quickly_nonzero(app_module, monkeypatch):
+    """Detached mode reports failure if the process exits within the probe window with non-zero code."""
+
+    class FakeQuickFailProcess:
+        pid = 8888
+        returncode = 127
+        stderr = None
+
+        async def wait(self):
+            return 127
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return FakeQuickFailProcess()
+
+    monkeypatch.setattr(app_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(app_module.shutil, "which", lambda exe, path=None: f"/usr/bin/{exe}")
+
+    result = asyncio.run(app_module.safe_execute_command("bad-app", execution_mode="detached"))
+
+    assert result["ok"] is False
+    assert result["exit_code"] == 127
+
+
+def test_detached_mode_succeeds_when_process_exits_zero_immediately(app_module, monkeypatch):
+    """Detached mode returns ok=True, launched=True even when process exits 0 immediately (e.g., firefox opens existing instance)."""
+
+    class FakeQuickExitProcess:
+        pid = 7777
+        returncode = 0
+        stderr = None
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return FakeQuickExitProcess()
+
+    monkeypatch.setattr(app_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(app_module.shutil, "which", lambda exe, path=None: f"/usr/bin/{exe}")
+
+    result = asyncio.run(app_module.safe_execute_command("firefox", execution_mode="detached"))
+
+    assert result["ok"] is True
+    assert result.get("launched") is True
+    assert result["exit_code"] == 0
+
+
+@pytest.mark.anyio
+async def test_detached_mode_integration_long_running():
+    """Integration: sleep in detached mode returns launched=True (still running after probe)."""
+    from backend.actions.executor import safe_execute_command
+
+    result = await safe_execute_command("sleep 30", execution_mode="detached")
+
+    assert result["ok"] is True
+    assert result.get("launched") is True
+    assert result["exit_code"] is None
+    assert result["pid"] > 0
+
+
+@pytest.mark.anyio
+async def test_detached_mode_integration_nonexistent_command():
+    """Integration: nonexistent command in detached mode returns ok=False."""
+    from backend.actions.executor import safe_execute_command
+
+    result = await safe_execute_command("definitely-nonexistent-xyz", execution_mode="detached")
+
+    assert result["ok"] is False
+    assert "not found" in result["error"].lower()

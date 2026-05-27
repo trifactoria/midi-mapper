@@ -507,18 +507,79 @@ async def delete_profile(profile_id: int) -> Dict[str, Any]:
     if not source:
         raise HTTPException(status_code=404, detail="Profile not found")
 
+    count_row = await db_fetchone("SELECT COUNT(*) AS cnt FROM profiles")
+    if count_row and count_row["cnt"] <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the last profile")
+
     async with db_connect() as db:
-        await db.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+        binding_cur = await db.execute(
+            "SELECT id, action_id, trigger_id FROM bindings_v2 WHERE profile_id = ?",
+            (profile_id,),
+        )
+        binding_rows = await binding_cur.fetchall()
+        binding_ids = [r["id"] for r in binding_rows]
+        action_ids = [r["action_id"] for r in binding_rows]
+        trigger_ids = set(r["trigger_id"] for r in binding_rows)
+
+        layer_cur = await db.execute(
+            "SELECT id, activation_trigger_id FROM layers WHERE profile_id = ?",
+            (profile_id,),
+        )
+        layer_rows = await layer_cur.fetchall()
+        layer_ids = [r["id"] for r in layer_rows]
+        for r in layer_rows:
+            if r["activation_trigger_id"]:
+                trigger_ids.add(r["activation_trigger_id"])
+
+        for bid in binding_ids:
+            await db.execute("UPDATE runs SET binding_id = NULL WHERE binding_id = ?", (bid,))
+        for lid in layer_ids:
+            await db.execute("UPDATE runs SET layer_id = NULL WHERE layer_id = ?", (lid,))
+        await db.execute("UPDATE runs SET profile_id = NULL WHERE profile_id = ?", (profile_id,))
+
+        for bid in binding_ids:
+            await db.execute("DELETE FROM legacy_binding_migrations WHERE binding_v2_id = ?", (bid,))
+
+        await db.execute(
+            "UPDATE layers SET activation_trigger_id = NULL WHERE profile_id = ?", (profile_id,)
+        )
+        await db.execute("DELETE FROM bindings_v2 WHERE profile_id = ?", (profile_id,))
+
+        for tid in trigger_ids:
+            b_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM bindings_v2 WHERE trigger_id = ?", (tid,)
+            )
+            l_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM layers WHERE activation_trigger_id = ?", (tid,)
+            )
+            if (await b_cur.fetchone())["cnt"] == 0 and (await l_cur.fetchone())["cnt"] == 0:
+                await db.execute("DELETE FROM triggers WHERE id = ?", (tid,))
+
+        for aid in set(action_ids):
+            b_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM bindings_v2 WHERE action_id = ?", (aid,)
+            )
+            r_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM runs WHERE action_id = ?", (aid,)
+            )
+            if (await b_cur.fetchone())["cnt"] == 0 and (await r_cur.fetchone())["cnt"] == 0:
+                await db.execute("DELETE FROM actions WHERE id = ?", (aid,))
+
         activated_profile_id = None
         if source["active"]:
-            cursor = await db.execute("SELECT id FROM profiles ORDER BY id LIMIT 1")
-            row = await cursor.fetchone()
+            next_cur = await db.execute(
+                "SELECT id FROM profiles WHERE id != ? ORDER BY id LIMIT 1",
+                (profile_id,),
+            )
+            row = await next_cur.fetchone()
             if row:
                 activated_profile_id = row["id"]
                 await db.execute(
                     "UPDATE profiles SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (activated_profile_id,),
                 )
+
+        await db.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         await db.commit()
 
     return {

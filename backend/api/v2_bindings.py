@@ -56,6 +56,7 @@ class V2BindingCreateIn(BaseModel):
     display_label: str = ""
     display_color: Optional[str] = None
     display_emoji: str = ""
+    display_icon: str = ""
 
 
 class V2BindingPatchIn(BaseModel):
@@ -68,6 +69,7 @@ class V2BindingPatchIn(BaseModel):
     display_label: Optional[str] = None
     display_color: Optional[str] = None
     display_emoji: Optional[str] = None
+    display_icon: Optional[str] = None
 
 
 def _validate_midi_range(field_name: str, value: Optional[int]) -> None:
@@ -123,6 +125,7 @@ def _binding_response(row: Dict[str, Any]) -> Dict[str, Any]:
         "display_label": row["display_label"],
         "display_color": row["display_color"],
         "display_emoji": row["display_emoji"],
+        "display_icon": row["display_icon"],
         "legacy_binding_id": row["legacy_binding_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -181,6 +184,7 @@ BINDING_SELECT = """
       b.display_label,
       b.display_color,
       b.display_emoji,
+      b.display_icon,
       b.legacy_binding_id,
       b.created_at,
       b.updated_at,

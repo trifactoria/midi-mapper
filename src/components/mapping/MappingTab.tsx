@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import { ActiveBindingsList } from "../bindings/ActiveBindingsList";
+import { EditBindingModal } from "../bindings/EditBindingModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { RunHistoryPreview } from "../history/RunHistoryPreview";
-import type { BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
+import type { BackendActionRunResult, BackendBindingCreatePayload, BackendBindingPatch } from "../v2/api";
 import type {
   AutomationState,
   CcBar,
@@ -26,10 +27,18 @@ type Props = {
   automation: AutomationState;
   canMutateBindings: boolean;
   onCreateBinding: (payload: BackendBindingCreatePayload) => Promise<V2BindingSummary>;
+  onEditBinding?: (bindingId: string, patch: BackendBindingPatch) => Promise<void>;
+  onToggleBindingEnabled?: (bindingId: string) => void;
+  onDuplicateBinding?: (bindingId: string) => Promise<V2BindingSummary | null>;
   onDryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
   onDeleteBinding: (bindingId: string) => Promise<void>;
   onClearRuns?: () => Promise<void>;
+  onKeygrabChange?: (enabled: boolean) => void;
+  onMouseModeChange?: (mouseMode: boolean) => void;
+  onClearEvents?: () => void;
+  onSimulateNote?: (note: number) => void;
+  selectedInputPort?: string | null;
   liveMatchedBindingId?: string | null;
   lastMidiEvent?: V2MidiEventPayload | null;
 };
@@ -67,22 +76,40 @@ export function MappingTab({
   automation,
   canMutateBindings,
   onCreateBinding,
+  onEditBinding,
+  onToggleBindingEnabled,
+  onDuplicateBinding,
   onDryRunAction,
   onTestAction,
   onDeleteBinding,
   onClearRuns,
+  onKeygrabChange,
+  onMouseModeChange,
+  onClearEvents,
+  onSimulateNote,
+  selectedInputPort,
   liveMatchedBindingId,
   lastMidiEvent,
 }: Props) {
   const [selectedBindingId, setSelectedBindingId] = useState<string | null>(null);
+  const [editingBinding, setEditingBinding] = useState<V2BindingSummary | null>(null);
   const [clearRunsOpen, setClearRunsOpen] = useState(false);
   const tileCaptureKeyRef = useRef(0);
   const [tileCapture, setTileCapture] = useState<TileCapture | null>(null);
 
   function handleNoteClick(note: number) {
+    if (!automation.mouseMode) return;
+    onSimulateNote?.(note);
+    const matching = bindings.filter(
+      (b) => b.kind === "note" && b.note === note && b.enabled && b.actionId,
+    );
+    for (const b of matching) {
+      void onTestAction(b.actionId!).catch(() => {});
+    }
     setTileCapture({ type: "note", value: note, key: ++tileCaptureKeyRef.current });
   }
   function handleCcClick(controller: number) {
+    if (!automation.mouseMode) return;
     setTileCapture({ type: "cc", value: controller, key: ++tileCaptureKeyRef.current });
   }
   const highlightedBindingId = selectedBindingId ?? liveMatchedBindingId ?? null;
@@ -93,7 +120,14 @@ export function MappingTab({
 
   return (
     <div className="space-y-2">
-      <MidiInputMonitor events={events} automation={automation} />
+      <MidiInputMonitor
+        events={events}
+        automation={automation}
+        selectedInputPort={selectedInputPort}
+        onKeygrabChange={onKeygrabChange}
+        onMouseModeChange={onMouseModeChange}
+        onClearEvents={onClearEvents}
+      />
 
       <div className="grid gap-2.5 xl:grid-cols-[284px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)_336px]">
         {/* Column 1 — Binding editor */}
@@ -112,8 +146,8 @@ export function MappingTab({
 
         {/* Column 2 — Note map + control map */}
         <div className="order-1 min-w-0 space-y-2 xl:order-2">
-          <KeyboardGrid notes={notes} onNoteClick={handleNoteClick} />
-          <CcFaderPanel bars={bars} onCcClick={handleCcClick} />
+          <KeyboardGrid notes={notes} onNoteClick={automation.mouseMode ? handleNoteClick : undefined} />
+          <CcFaderPanel bars={bars} onCcClick={automation.mouseMode ? handleCcClick : undefined} />
         </div>
 
         {/* Column 3 — Active bindings + run history (stacks under center on xl, side at 2xl) */}
@@ -145,6 +179,13 @@ export function MappingTab({
                 bindings={bindings}
                 selectedBindingId={highlightedBindingId}
                 onSelectBinding={(binding) => setSelectedBindingId(binding.id)}
+                onEditBinding={(binding) => setEditingBinding(binding)}
+                onToggleEnabled={onToggleBindingEnabled ? (binding) => onToggleBindingEnabled(binding.id) : undefined}
+                onDuplicateBinding={onDuplicateBinding ? (binding) => {
+                  void onDuplicateBinding(binding.id).then((dup) => {
+                    if (dup) setEditingBinding(dup);
+                  });
+                } : undefined}
                 onDeleteBinding={(binding) => {
                   void onDeleteBinding(binding.id).then(() => {
                     setSelectedBindingId((current) => (current === binding.id ? null : current));
@@ -186,6 +227,14 @@ export function MappingTab({
         onConfirm={() => { setClearRunsOpen(false); void onClearRuns?.(); }}
         onCancel={() => setClearRunsOpen(false)}
       />
+      {editingBinding && onEditBinding && (
+        <EditBindingModal
+          key={editingBinding.id}
+          binding={editingBinding}
+          onSave={onEditBinding}
+          onCancel={() => setEditingBinding(null)}
+        />
+      )}
     </div>
   );
 }

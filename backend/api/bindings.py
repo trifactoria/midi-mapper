@@ -180,6 +180,7 @@ async def update_v2_binding(binding_id: int, payload: V2BindingPatchIn) -> Dict[
         "display_label",
         "display_color",
         "display_emoji",
+        "display_icon",
     ):
         value = getattr(payload, field_name)
         if value is not None:
@@ -263,6 +264,77 @@ async def update_v2_binding(binding_id: int, payload: V2BindingPatchIn) -> Dict[
         await db.commit()
 
     return await get_v2_binding(binding_id)
+
+
+@router.post("/api/bindings/{binding_id}/duplicate")
+async def duplicate_v2_binding(binding_id: int) -> Dict[str, Any]:
+    existing = await get_v2_binding(binding_id)
+
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            INSERT INTO triggers(
+              event_type, channel, note, controller, program,
+              pitch_min, pitch_max, value_min, value_max,
+              velocity_min, velocity_max, device_id, port_name,
+              bank_msb, bank_lsb, program_filter, raw_match_json
+            )
+            SELECT
+              event_type, channel, note, controller, program,
+              pitch_min, pitch_max, value_min, value_max,
+              velocity_min, velocity_max, device_id, port_name,
+              bank_msb, bank_lsb, program_filter, raw_match_json
+            FROM triggers WHERE id = ?
+            """,
+            (existing["trigger_id"],),
+        )
+        new_trigger_id = cur.lastrowid
+
+        cur = await db.execute(
+            """
+            INSERT INTO actions(
+              type, label, command, args_json, working_directory,
+              environment_json, execution_mode, timeout_ms,
+              cooldown_ms, allow_concurrent, notify_text, notify_emoji
+            )
+            SELECT
+              type, label, command, args_json, working_directory,
+              environment_json, execution_mode, timeout_ms,
+              cooldown_ms, allow_concurrent, notify_text, notify_emoji
+            FROM actions WHERE id = ?
+            """,
+            (existing["action_id"],),
+        )
+        new_action_id = cur.lastrowid
+
+        cur = await db.execute(
+            """
+            INSERT INTO bindings_v2(
+              profile_id, layer_id, trigger_id, action_id,
+              enabled, require_armed, cooldown_ms, notes,
+              display_label, display_color, display_emoji, display_icon
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                existing["profile_id"],
+                existing["layer_id"],
+                new_trigger_id,
+                new_action_id,
+                0,  # duplicates start disabled to avoid accidental double-firing
+                existing["require_armed"],
+                existing["cooldown_ms"],
+                existing["notes"],
+                existing["display_label"],
+                existing["display_color"],
+                existing["display_emoji"],
+                existing["display_icon"],
+            ),
+        )
+        new_binding_id = cur.lastrowid
+        await db.commit()
+
+    return await get_v2_binding(new_binding_id)
 
 
 @router.delete("/api/bindings/{binding_id}")

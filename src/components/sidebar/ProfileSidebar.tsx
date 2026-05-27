@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ConfirmDialog } from "../ConfirmDialog";
 import type { V2LayerSummary, V2ProfileSummary } from "../v2/types";
 
 type Props = {
@@ -10,9 +11,12 @@ type Props = {
   onCreateLayer?: () => Promise<string | null>;
   onRenameProfile?: (profileId: string, name: string) => Promise<void>;
   onRenameLayer?: (layerId: string, name: string) => Promise<void>;
+  onDeleteProfile?: (profileId: string) => Promise<void>;
+  onDeleteLayer?: (layerId: string) => Promise<void>;
 };
 
 type EditTarget = { type: "profile" | "layer"; id: string; draft: string } | null;
+type DeleteTarget = { type: "profile" | "layer"; id: string; name: string } | null;
 
 function PlusButton({
   label,
@@ -61,8 +65,12 @@ export function ProfileSidebar({
   onCreateLayer,
   onRenameProfile,
   onRenameLayer,
+  onDeleteProfile,
+  onDeleteLayer,
 }: Props) {
   const [editing, setEditing] = useState<EditTarget>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   function startEdit(type: "profile" | "layer", id: string, currentName: string) {
     setEditing({ type, id, draft: currentName });
@@ -137,11 +145,13 @@ export function ProfileSidebar({
                   />
                 </div>
               ) : (
-                <button
-                  type="button"
+                <div
                   key={profile.id}
-                  onClick={() => onProfileActivate?.(profile.id)}
                   className={[rowBase, profile.active ? rowActive : rowInactive].join(" ")}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onProfileActivate?.(profile.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onProfileActivate?.(profile.id); }}
                 >
                   <span
                     className={[
@@ -162,7 +172,21 @@ export function ProfileSidebar({
                       <StarIcon />
                     </span>
                   )}
-                </button>
+                  {onDeleteProfile && profiles.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget({ type: "profile", id: profile.id, name: profile.name }); }}
+                      className="ml-auto !h-4 !w-4 shrink-0 place-items-center rounded !p-0 text-white/0 opacity-0 transition group-hover:text-white/40 group-hover:opacity-100 hover:!text-rose-300/80"
+                      style={{ background: "transparent", border: "none", display: "grid" }}
+                      aria-label={`Delete profile ${profile.name}`}
+                      title={`Delete ${profile.name}`}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M4 4l8 8M12 4l-8 8" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               ),
             )}
           </div>
@@ -204,11 +228,13 @@ export function ProfileSidebar({
                   />
                 </div>
               ) : (
-                <button
-                  type="button"
+                <div
                   key={layer.id}
-                  onClick={() => onLayerActivate?.(layer.id)}
                   className={[rowBase, layer.active ? layerRowActive : rowInactive].join(" ")}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onLayerActivate?.(layer.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onLayerActivate?.(layer.id); }}
                 >
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full"
@@ -226,13 +252,49 @@ export function ProfileSidebar({
                   <span className="shrink-0 font-mono text-[10px] tabular-nums text-white/35">
                     {layer.bindingCount}
                   </span>
-                </button>
+                  {onDeleteLayer && layers.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget({ type: "layer", id: layer.id, name: layer.name }); }}
+                      className="!h-4 !w-4 shrink-0 place-items-center rounded !p-0 text-white/0 opacity-0 transition group-hover:text-white/40 group-hover:opacity-100 hover:!text-rose-300/80"
+                      style={{ background: "transparent", border: "none", display: "grid" }}
+                      aria-label={`Delete layer ${layer.name}`}
+                      title={`Delete ${layer.name}`}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M4 4l8 8M12 4l-8 8" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               ),
             )}
           </div>
         </section>
       </div>
 
+      {deleteError && (
+        <div className="flex items-start gap-1.5 border-t border-rose-300/15 bg-rose-400/[0.07] px-2.5 py-2">
+          <span className="mt-px shrink-0 text-rose-300/80">
+            <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="6" />
+              <path d="M8 5v3.5M8 10.5v.5" />
+            </svg>
+          </span>
+          <span className="text-[10.5px] leading-tight text-rose-200/80">{deleteError}</span>
+          <button
+            type="button"
+            onClick={() => setDeleteError(null)}
+            className="ml-auto shrink-0 !p-0 text-rose-300/50 hover:text-rose-300/80"
+            style={{ background: "none", border: "none" }}
+            aria-label="Dismiss"
+          >
+            <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+        </div>
+      )}
       <div className="space-y-1.5 border-t border-white/10 px-2.5 py-2.5">
         <button
           type="button"
@@ -245,6 +307,30 @@ export function ProfileSidebar({
         </button>
         <div className="px-1 text-[9.5px] uppercase tracking-[0.18em] text-white/30">v0.2.0</div>
       </div>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        message={
+          deleteTarget
+            ? deleteTarget.type === "profile"
+              ? `Delete profile "${deleteTarget.name}"? All its layers and bindings will be removed.`
+              : `Delete layer "${deleteTarget.name}"? All its bindings will be removed.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          setDeleteError(null);
+          const handler = target.type === "profile" ? onDeleteProfile : onDeleteLayer;
+          handler?.(target.id).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : "Delete failed";
+            setDeleteError(msg);
+          });
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </aside>
   );
 }

@@ -257,7 +257,7 @@ async def _execute_v2_match(
 
     LAST_FIRED[("v2", binding_id)] = now
     started_at = time.time()
-    result = await safe_execute_command(command)
+    result = await safe_execute_command(command, execution_mode=action.get("execution_mode", "argv"))
     run_id = await record_v2_action_run(
         action_id=int(binding["action_id"]),
         binding_id=binding_id,

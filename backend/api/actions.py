@@ -67,7 +67,11 @@ async def test_action(action_id: int) -> Dict[str, Any]:
     if not action["command"]:
         raise HTTPException(status_code=400, detail="Action command is required")
     started_at = time.time()
-    result = await safe_execute_command(action["command"])
+    result = await safe_execute_command(
+        action["command"],
+        timeout_ms=action.get("timeout_ms"),
+        execution_mode=action.get("execution_mode", "argv"),
+    )
     run_id = await record_v2_action_test_run(
         action_id=action_id,
         action_summary=action["command"],

@@ -19,6 +19,8 @@ ALLOW_ORIGINS = ["*"] if CORS_ORIGINS.strip() == "*" else [s.strip() for s in CO
 
 EXEC_PATH_ENV = os.environ.get("MIDI_MAPPER_EXEC_PATH", "$PATH")
 EXEC_USE_SHELL = os.environ.get("MIDI_MAPPER_EXEC_USE_SHELL", "false").lower() in ("true", "1", "yes")
+# Default command timeout in milliseconds; per-action timeout_ms overrides this.
+EXEC_TIMEOUT_MS = int(os.environ.get("MIDI_MAPPER_EXEC_TIMEOUT_MS", "10000"))
 
 if EXEC_PATH_ENV == "$PATH" or not EXEC_PATH_ENV:
     EXEC_PATH = os.environ.get("PATH", "")

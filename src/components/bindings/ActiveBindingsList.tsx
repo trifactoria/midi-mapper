@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type { V2BindingSummary } from "../v2/types";
 
 const BINDING_COLOR_HEX: Record<string, string> = {
@@ -18,6 +21,9 @@ type Props = {
   compact?: boolean;
   selectedBindingId?: string | null;
   onSelectBinding?: (binding: V2BindingSummary) => void;
+  onEditBinding?: (binding: V2BindingSummary) => void;
+  onToggleEnabled?: (binding: V2BindingSummary) => void;
+  onDuplicateBinding?: (binding: V2BindingSummary) => void;
   onDeleteBinding?: (binding: V2BindingSummary) => void;
 };
 
@@ -61,8 +67,24 @@ export function ActiveBindingsList({
   compact = false,
   selectedBindingId,
   onSelectBinding,
+  onEditBinding,
+  onToggleEnabled,
+  onDuplicateBinding,
   onDeleteBinding,
 }: Props) {
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!menuOpenId) return;
+    function close(e: MouseEvent) {
+      if (!(e.target as HTMLElement).closest("[data-binding-menu]")) {
+        setMenuOpenId(null);
+      }
+    }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpenId]);
+
   if (bindings.length === 0) {
     return (
       <p className="py-2 text-center text-[11px] text-white/30">No bindings yet</p>
@@ -81,13 +103,14 @@ export function ActiveBindingsList({
               ? "border-cyan-300/25 shadow-[inset_0_0_0_1px_rgba(0,180,210,0.12)]"
               : binding.enabled
               ? "border-white/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.02)]"
-              : "border-white/6 opacity-70",
+              : "border-white/6 opacity-60",
           ].join(" ")}
         >
           <div className="flex items-center gap-2">
             <KindGlyph kind={binding.kind} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 leading-none">
+                <span className="font-mono text-[10px] text-white/35">Ch {(binding.channel ?? 0) + 1}</span>
                 <span className="truncate font-mono text-[11.5px] font-semibold tracking-tight text-white">
                   {binding.triggerLabel}
                 </span>
@@ -102,7 +125,7 @@ export function ActiveBindingsList({
                 </span>
               </div>
             </div>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="relative flex shrink-0 items-center gap-1" data-binding-menu>
               {binding.displayColor && BINDING_COLOR_HEX[binding.displayColor] && (
                 <span
                   className="h-2 w-2 shrink-0 rounded-full"
@@ -115,10 +138,11 @@ export function ActiveBindingsList({
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onDeleteBinding?.(binding);
+                  setMenuOpenId((current) => (current === binding.id ? null : binding.id));
                 }}
                 className="grid !h-5 !w-5 place-items-center rounded border border-white/8 bg-white/[0.03] !p-0 text-white/45 hover:bg-white/[0.06]"
-                aria-label="Delete binding"
+                aria-label="Binding actions"
+                aria-expanded={menuOpenId === binding.id}
               >
                 <svg viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor">
                   <circle cx="8" cy="3.5" r="1" />
@@ -126,6 +150,83 @@ export function ActiveBindingsList({
                   <circle cx="8" cy="12.5" r="1" />
                 </svg>
               </button>
+              {menuOpenId === binding.id && (
+                <div className="absolute right-0 top-6 z-50 min-w-[128px] rounded border border-white/15 bg-zinc-900 py-0.5 shadow-xl">
+                  {onEditBinding && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        onEditBinding(binding);
+                      }}
+                      className="flex w-full items-center gap-2 !px-3 !py-1.5 text-left !text-[11px] text-white/75 hover:bg-white/[0.06]"
+                      style={{ background: "transparent", border: "none", borderRadius: 0 }}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-white/40" fill="none" stroke="currentColor" strokeWidth="1.4">
+                        <path d="M11 2.5l2.5 2.5-7 7H4v-2.5l7-7z" />
+                      </svg>
+                      Edit
+                    </button>
+                  )}
+                  {onToggleEnabled && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        onToggleEnabled(binding);
+                      }}
+                      className="flex w-full items-center gap-2 !px-3 !py-1.5 text-left !text-[11px] text-white/75 hover:bg-white/[0.06]"
+                      style={{ background: "transparent", border: "none", borderRadius: 0 }}
+                    >
+                      <span className={[
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        binding.enabled ? "bg-emerald-300" : "bg-white/30",
+                      ].join(" ")} />
+                      {binding.enabled ? "Disable" : "Enable"}
+                    </button>
+                  )}
+                  {onDuplicateBinding && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        onDuplicateBinding(binding);
+                      }}
+                      className="flex w-full items-center gap-2 !px-3 !py-1.5 text-left !text-[11px] text-white/75 hover:bg-white/[0.06]"
+                      style={{ background: "transparent", border: "none", borderRadius: 0 }}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-white/40" fill="none" stroke="currentColor" strokeWidth="1.4">
+                        <rect x="5" y="5" width="8" height="8" rx="1.2" />
+                        <path d="M3 11V3h8" />
+                      </svg>
+                      Duplicate
+                    </button>
+                  )}
+                  {(onEditBinding || onToggleEnabled || onDuplicateBinding) && onDeleteBinding && (
+                    <div className="my-0.5 border-t border-white/8" />
+                  )}
+                  {onDeleteBinding && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(null);
+                        onDeleteBinding(binding);
+                      }}
+                      className="flex w-full items-center gap-2 !px-3 !py-1.5 text-left !text-[11px] text-rose-300/70 hover:bg-white/[0.06]"
+                      style={{ background: "transparent", border: "none", borderRadius: 0 }}
+                    >
+                      <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.4">
+                        <path d="M3 5h10M6 5V3.5h4V5M5.5 5l.5 7.5h4l.5-7.5" />
+                      </svg>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

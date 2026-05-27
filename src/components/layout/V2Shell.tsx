@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ActionsPanel } from "../bindings/ActionsPanel";
 import { BindingsPanel } from "../bindings/BindingsPanel";
+import { ConsolePanel } from "../console/ConsolePanel";
 import { RunHistoryPanel } from "../history/RunHistoryPanel";
 import { MappingTab } from "../mapping/MappingTab";
 import { ProfileSidebar, ProfileLayerCompactBar } from "../sidebar/ProfileSidebar";
@@ -64,6 +65,7 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
 
 export function V2Shell() {
   const [activeTab, setActiveTab] = useState<TabId>("mapping");
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const {
     profiles,
     layers,
@@ -92,7 +94,16 @@ export function V2Shell() {
     renameLayer,
     canMutateBindings,
     createBinding,
+    editBinding,
+    toggleBindingEnabled,
+    duplicateBinding,
     deleteBinding,
+    deleteProfile,
+    deleteLayer,
+    clearMonitorEvents,
+    setKeygrab,
+    setMouseMode,
+    simulateNote,
     dryRunAction,
     testAction,
   } = useV2ReadData();
@@ -119,6 +130,7 @@ export function V2Shell() {
           selectedInputPort={selectedInputPort}
           onAutomationArmedChange={(armed) => void setAutomationArmed(armed)}
           onSelectedInputPortChange={(portName) => void setSelectedInputPort(portName)}
+          onSettingsClick={() => setActiveTab("settings")}
         />
 
         {/* Mobile profile/layer compact bar */}
@@ -143,6 +155,8 @@ export function V2Shell() {
               onCreateLayer={createLayer}
               onRenameProfile={renameProfile}
               onRenameLayer={renameLayer}
+              onDeleteProfile={deleteProfile}
+              onDeleteLayer={deleteLayer}
             />
           </div>
 
@@ -187,10 +201,18 @@ export function V2Shell() {
                   automation={automation}
                   canMutateBindings={canMutateBindings}
                   onCreateBinding={createBinding}
+                  onEditBinding={editBinding}
+                  onToggleBindingEnabled={(id) => void toggleBindingEnabled(id)}
+                  onDuplicateBinding={duplicateBinding}
                   onDryRunAction={dryRunAction}
                   onTestAction={testAction}
                   onDeleteBinding={deleteBinding}
                   onClearRuns={clearRuns}
+                  onKeygrabChange={(enabled) => void setKeygrab(enabled)}
+                  onMouseModeChange={(mouseMode) => setMouseMode(mouseMode)}
+                  onClearEvents={clearMonitorEvents}
+                  onSimulateNote={simulateNote}
+                  selectedInputPort={selectedInputPort}
                   liveMatchedBindingId={liveMatchedBindingId}
                   lastMidiEvent={lastMidiEvent}
                 />
@@ -198,7 +220,19 @@ export function V2Shell() {
               {activeTab === "bindings" && <BindingsPanel bindings={bindings} />}
               {activeTab === "actions" && <ActionsPanel bindings={bindings} />}
               {activeTab === "history" && <RunHistoryPanel runs={runs} onClearRuns={clearRuns} />}
-              {activeTab === "settings" && <SettingsPanel />}
+              {activeTab === "settings" && (
+                <SettingsPanel
+                  automation={automation}
+                  selectedInputPort={selectedInputPort}
+                  inputPorts={inputPorts}
+                  midiStatus={midiStatus}
+                  dataSourceLabel={dataSourceLabel}
+                  onAutomationArmedChange={(armed) => void setAutomationArmed(armed)}
+                  onKeygrabChange={(enabled) => void setKeygrab(enabled)}
+                  onMouseModeChange={(mouseMode) => setMouseMode(mouseMode)}
+                  onSelectedInputPortChange={(portName) => void setSelectedInputPort(portName)}
+                />
+              )}
             </main>
           </div>
         </div>
@@ -243,15 +277,29 @@ export function V2Shell() {
           </span>
           <button
             type="button"
-            className="ml-1 inline-flex !h-6 items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] !px-2 !text-[10.5px] text-white/80 hover:bg-white/[0.08]"
+            onClick={() => setConsoleOpen((o) => !o)}
+            className={[
+              "ml-1 inline-flex !h-6 items-center gap-1.5 rounded-md border !px-2 !text-[10.5px] transition",
+              consoleOpen
+                ? "border-cyan-300/25 text-cyan-200 shadow-[inset_0_0_0_1px_rgba(0,180,210,0.12)]"
+                : "border-white/10 text-white/80 hover:bg-white/[0.06]",
+            ].join(" ")}
+            style={{ background: consoleOpen ? "rgba(0,180,210,0.07)" : "rgba(255,255,255,0.04)" }}
           >
             <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
               <rect x="2.5" y="3" width="11" height="10" rx="1.2" />
               <path d="M5 7l1.5 1.5L5 10M8.5 10h2.5" />
             </svg>
-            Open Console
+            Console
           </button>
         </footer>
+        {consoleOpen && (
+          <ConsolePanel
+            runs={runs}
+            onClose={() => setConsoleOpen(false)}
+            onClearRuns={clearRuns}
+          />
+        )}
       </div>
     </div>
   );

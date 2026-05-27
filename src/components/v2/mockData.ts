@@ -15,9 +15,8 @@ import type {
 export const automationState: AutomationState = {
   armed: true,
   matchingMode: "legacy",
-  mouseMode: false,
-  liveConsole: true,
   keygrab: true,
+  mouseMode: false,
 };
 
 export const profiles: V2ProfileSummary[] = [

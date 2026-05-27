@@ -35,18 +35,55 @@ export type BackendAction = {
   id?: number | string | null;
   label?: string | null;
   command?: string | null;
+  working_directory?: string | null;
+  execution_mode?: string | null;
+  timeout_ms?: number | null;
+  notify_text?: string | null;
+  notify_emoji?: string | null;
 };
 
 export type BackendBinding = {
   id: number | string;
-  action_id?: number | string | null;
+  profile_id?: number | string | null;
   layer_id?: number | string | null;
+  trigger_id?: number | string | null;
+  action_id?: number | string | null;
   enabled?: boolean | number | null;
   require_armed?: boolean | number | null;
+  cooldown_ms?: number | null;
+  notes?: string | null;
   display_label?: string | null;
   display_color?: string | null;
+  display_icon?: string | null;
   trigger?: BackendTrigger | null;
   action?: BackendAction | null;
+};
+
+export type BackendBindingPatch = {
+  enabled?: 0 | 1;
+  require_armed?: 0 | 1;
+  cooldown_ms?: number;
+  notes?: string;
+  display_label?: string;
+  display_color?: string;
+  display_icon?: string;
+  trigger?: {
+    event_type?: string;
+    channel?: number;
+    note?: number;
+    controller?: number;
+    value_min?: number;
+    value_max?: number;
+    velocity_min?: number;
+    velocity_max?: number;
+  };
+  action?: {
+    command?: string;
+    label?: string;
+    working_directory?: string;
+    execution_mode?: string;
+    timeout_ms?: number;
+  };
 };
 
 export type BackendBindingCreatePayload = {
@@ -65,7 +102,7 @@ export type BackendBindingCreatePayload = {
     label: string;
     command: string;
     working_directory?: string;
-    execution_mode?: "argv";
+    execution_mode?: "argv" | "detached";
   };
   enabled: 0 | 1;
   require_armed: 0 | 1;
@@ -73,6 +110,7 @@ export type BackendBindingCreatePayload = {
   notes: string;
   display_label: string;
   display_color?: string;
+  display_icon?: string;
 };
 
 export type BackendActionRunResult = {
@@ -95,10 +133,13 @@ export type BackendRun = {
   trigger_snapshot_json?: string | null;
   action_summary?: string | null;
   started_at?: string | null;
+  finished_at?: string | null;
   created_at?: string | null;
   duration_ms?: number | null;
   status?: string | null;
   exit_code?: number | null;
+  stdout_preview?: string | null;
+  stderr_preview?: string | null;
   error_message?: string | null;
 };
 
@@ -185,7 +226,12 @@ async function apiDelete<T>(path: string): Promise<T> {
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`DELETE ${path} failed: ${response.status}`);
+    let detail: string | undefined;
+    try {
+      const body = await response.json() as { detail?: string };
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail ?? `DELETE ${path} failed: ${response.status}`);
   }
   return response.json() as Promise<T>;
 }
@@ -218,7 +264,14 @@ export const v2Api = {
   activateLayer: (layerId: string) => apiPost<BackendLayer>(`/api/layers/${layerId}/activate`),
   createBinding: (layerId: string, payload: BackendBindingCreatePayload) =>
     apiPost<BackendBinding>(`/api/layers/${layerId}/bindings`, payload),
+  patchBinding: (bindingId: string, payload: BackendBindingPatch) =>
+    apiPatch<BackendBinding>(`/api/bindings/${bindingId}`, payload),
+  duplicateBinding: (bindingId: string) =>
+    apiPost<BackendBinding>(`/api/bindings/${bindingId}/duplicate`),
   deleteBinding: (bindingId: string) => apiDelete<{ ok?: boolean }>(`/api/bindings/${bindingId}`),
+  deleteProfile: (profileId: string) => apiDelete<{ ok: boolean; deleted_profile_id: number; activated_profile_id: number | null }>(`/api/profiles/${profileId}`),
+  deleteLayer: (layerId: string) => apiDelete<{ ok: boolean; deleted_layer_id: number; activated_layer_id: number | null }>(`/api/layers/${layerId}`),
+  setKeygrab: (enabled: boolean) => apiPost<{ ok: boolean; keygrab: boolean }>(`/api/keygrab/set?enabled=${String(enabled)}`),
   dryRunAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/dry_run`),
   testAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/test`),
 };

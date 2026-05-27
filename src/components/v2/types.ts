@@ -1,9 +1,8 @@
 export type AutomationState = {
   armed: boolean;
   matchingMode: "legacy" | "v2" | "dual";
-  mouseMode: boolean;
-  liveConsole: boolean;
   keygrab: boolean;
+  mouseMode: boolean;
 };
 
 export type V2ProfileSummary = {
@@ -30,6 +29,7 @@ export type V2BindingSummary = {
   id: string;
   kind: BindingKind;
   actionId?: string;
+  triggerId?: string;
   triggerLabel: string;
   triggerCondition: string;
   channel?: number;
@@ -41,10 +41,17 @@ export type V2BindingSummary = {
   velocityMax?: number;
   actionLabel: string;
   command: string;
+  workingDirectory?: string;
+  executionMode?: string;
+  timeoutMs?: number;
   layer: string;
   enabled: boolean;
   requireArmed: boolean;
+  cooldownMs?: number;
+  notes?: string;
   displayColor?: string;
+  displayLabel?: string;
+  icon?: string;
   /** Legacy fields kept for back-compat with other panels */
   label?: string;
   trigger?: string;
@@ -63,6 +70,10 @@ export type V2RunSummary = {
   statusDetail?: string;
   relativeTime: string;
   durationMs: number;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  errorMessage?: string;
+  startedAt?: string;
   /** Legacy fields */
   action?: string;
   time?: string;
@@ -87,6 +98,7 @@ export type KeyboardNote = {
   pressed?: boolean;
   velocity?: number;
   dots?: NoteDotColor[];
+  icon?: string;
 };
 
 export type CcControl = {

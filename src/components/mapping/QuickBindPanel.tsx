@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { IconPicker } from "../IconPicker";
 import type { BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
 import type { V2BindingSummary, V2MidiEventPayload } from "../v2/types";
 
@@ -59,6 +60,7 @@ type ActionPreset = {
   command: string;
   args: string;
   hint?: string;
+  execution_mode?: "argv" | "detached";
 };
 
 const PRESET_GROUPS: { group: string; items: ActionPreset[] }[] = [
@@ -72,8 +74,8 @@ const PRESET_GROUPS: { group: string; items: ActionPreset[] }[] = [
   {
     group: "Open",
     items: [
-      { id: "open_url", label: "Open URL", command: "xdg-open", args: "https://example.com", hint: "Requires xdg-open" },
-      { id: "open_app", label: "Open App", command: "firefox", args: "", hint: "Edit command to your app binary name" },
+      { id: "open_url", label: "Open URL", command: "xdg-open", args: "https://example.com", hint: "Requires xdg-open", execution_mode: "detached" },
+      { id: "open_app", label: "Open App", command: "firefox", args: "", hint: "Edit command to your app binary name", execution_mode: "detached" },
     ],
   },
   {
@@ -211,6 +213,7 @@ export function QuickBindPanel({
   const [notes, setNotes] = useState("");
   const [presetId, setPresetId] = useState("custom");
   const [displayColor, setDisplayColor] = useState<BindingColorId>("cyan");
+  const [displayIcon, setDisplayIcon] = useState("");
   const [colorOpen, setColorOpen] = useState(false);
   const colorPickerRef = useRef<HTMLDivElement>(null);
   const [lastActionId, setLastActionId] = useState<string | null>(null);
@@ -375,7 +378,7 @@ export function QuickBindPanel({
           label: effectiveLabel,
           command: commandLine,
           working_directory: workingDirectory.trim() || undefined,
-          execution_mode: "argv",
+          execution_mode: activePreset?.execution_mode ?? "argv",
         },
         enabled: enabled ? 1 : 0,
         require_armed: requireArmed ? 1 : 0,
@@ -383,6 +386,7 @@ export function QuickBindPanel({
         notes,
         display_label: effectiveLabel,
         display_color: displayColor,
+        display_icon: displayIcon || undefined,
       });
       setLastActionId(created.actionId ?? null);
       setMessage("Binding created");
@@ -428,8 +432,10 @@ export function QuickBindPanel({
       <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
         <div className="mb-1.5 flex items-center justify-between">
           <SectionLabel>Quick Bind</SectionLabel>
-          {/* Color selector — only shown when a layer is active */}
-          <div ref={colorPickerRef} className="relative">
+          {/* Color + icon selectors */}
+          <div className="flex items-center gap-1.5">
+            <IconPicker value={displayIcon} onChange={setDisplayIcon} />
+            <div ref={colorPickerRef} className="relative">
             <button
               type="button"
               onClick={() => setColorOpen((o) => !o)}
@@ -461,6 +467,7 @@ export function QuickBindPanel({
                 ))}
               </div>
             )}
+            </div>
           </div>
         </div>
 

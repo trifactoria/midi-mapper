@@ -312,7 +312,7 @@ def test_action_test_uses_existing_safe_executor(client, monkeypatch):
     binding = create_note_binding(client, layer["id"]).json()
     calls = []
 
-    async def fake_execute(command):
+    async def fake_execute(command, timeout_ms=None, execution_mode="argv"):
         calls.append(command)
         return {"ok": True, "pid": 123, "argv": ["echo", "editor"]}
 

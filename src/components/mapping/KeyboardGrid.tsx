@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ICONS } from "../icons";
 import type { KeyboardNote, NoteDotColor } from "../v2/types";
 
 type Props = {
@@ -18,14 +20,37 @@ const DOT_COLOR: Record<NoteDotColor, string> = {
   slate: "bg-slate-400",
 };
 
-// A sharp/accidental note (C#, D#, F#, G#, A#) — semitone with a `#`
-// in the standard note-name set. We use this purely as a hierarchy hint
-// (recess sharps so the natural row "scans" first), not piano styling.
 function isSharp(midi: number) {
   return [1, 3, 6, 8, 10].includes(midi % 12);
 }
 
+function NoteIcon({ iconKey }: { iconKey: string }) {
+  const entry = ICONS.find((ic) => ic.key === iconKey);
+  if (!entry) return null;
+  return (
+    <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2">
+      <svg
+        viewBox="0 0 24 24"
+        className="h-2.5 w-2.5 text-white/40"
+        fill={entry.fill ? "currentColor" : "none"}
+        stroke={entry.fill ? "none" : "currentColor"}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {entry.paths.map((d, i) => (
+          <path key={i} d={d} />
+        ))}
+      </svg>
+    </span>
+  );
+}
+
 export function KeyboardGrid({ notes, onNoteClick }: Props) {
+  const [octave, setOctave] = useState(3);
+  const start = (octave + 1) * 12;
+  const visibleNotes = notes.filter((n) => n.note >= start && n.note < start + 36);
+
   return (
     <section className="rounded-md border border-white/12 bg-white/[0.038] px-3 pb-2 pt-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.055),0_6px_22px_-8px_rgba(0,0,0,0.6)]">
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -33,7 +58,9 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
           <h3 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">
             Note Map
           </h3>
-          <span className="text-[10.5px] text-white/40">Click a note to start mapping</span>
+          <span className="text-[10.5px] text-white/40">
+            {onNoteClick ? "Click a note to trigger its action" : "Enable Mouse Mode to trigger by click"}
+          </span>
         </div>
         <label className="flex !h-6 items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] !px-1.5 !text-[10.5px] text-white/75">
           <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -42,31 +69,26 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
           <select
             aria-label="Octave"
             className="!h-5 !rounded !border-white/10 !bg-transparent !px-0.5 !py-0 !text-[10.5px] text-white/85"
-            defaultValue="3"
+            value={octave}
+            onChange={(e) => setOctave(Number(e.target.value))}
           >
-            {[1, 2, 3, 4, 5, 6, 7].map((octave) => (
-              <option key={octave} value={octave} className="bg-zinc-900">
-                Octave {octave}
+            {[1, 2, 3, 4, 5, 6, 7].map((oct) => (
+              <option key={oct} value={oct} className="bg-zinc-900">
+                Octave {oct}
               </option>
             ))}
           </select>
         </label>
       </div>
 
-      {/* gap-x small, gap-y larger → subtle octave row separation */}
       <div className="grid grid-cols-6 gap-x-1 gap-y-1 sm:grid-cols-8 md:grid-cols-12 md:gap-y-[7px]">
-        {notes.map((note) => {
+        {visibleNotes.map((note) => {
           const sharp = isSharp(note.note);
 
-          // Base surface — naturals sit clearly forward, sharps clearly recede.
-          // `!important` + explicit `bg-none` defeats the global `button { background:
-          // linear-gradient(...) }` shorthand in globals.css that otherwise overlays a
-          // diagonal white sheen on every tile and washes out the contrast.
           const baseSurface = sharp
             ? "!bg-[#070a10] hover:!bg-[#0b1018] bg-none shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
             : "!bg-[#202838] hover:!bg-[#273247] bg-none shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]";
 
-          // Border + name text — naturals always meaningfully brighter than sharps.
           let stateClass: string;
           if (note.active) {
             stateClass = sharp
@@ -82,7 +104,6 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
               : "border-white/[0.16] text-white/90";
           }
 
-          // MIDI number color tier — restated explicitly per class.
           const midiNumberClass = sharp ? "text-white/[0.34]" : "text-white/[0.62]";
 
           return (
@@ -113,7 +134,7 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
               )}
 
               <span className="text-[11px] font-semibold leading-none tracking-tight">
-                {note.label.replace(/\d+$/, "")}
+                {note.label.replace(/-?\d+$/, "")}
               </span>
               <span className={["mt-px font-mono text-[8.5px] leading-none", midiNumberClass].join(" ")}>
                 {note.note}
@@ -124,11 +145,12 @@ export function KeyboardGrid({ notes, onNoteClick }: Props) {
                   v{note.velocity}
                 </span>
               )}
+
+              {note.icon && !note.velocity && <NoteIcon iconKey={note.icon} />}
             </button>
           );
         })}
       </div>
-
     </section>
   );
 }

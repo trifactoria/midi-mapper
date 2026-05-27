@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS bindings_v2 (
   display_label TEXT NOT NULL DEFAULT '',
   display_color TEXT,
   display_emoji TEXT NOT NULL DEFAULT '',
+  display_icon TEXT NOT NULL DEFAULT '',
   legacy_binding_id INTEGER REFERENCES bindings(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -183,3 +184,10 @@ async def apply_migrations() -> None:
 
         await db.executescript(V2_SCHEMA_SQL)
         await db.commit()
+
+        # Apply migration v2-001: Add display_icon to bindings_v2
+        cursor = await db.execute("PRAGMA table_info(bindings_v2)")
+        bv2_cols = [col[1] for col in await cursor.fetchall()]
+        if "display_icon" not in bv2_cols:
+            await db.execute("ALTER TABLE bindings_v2 ADD COLUMN display_icon TEXT NOT NULL DEFAULT ''")
+            await db.commit()

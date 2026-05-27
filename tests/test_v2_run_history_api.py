@@ -25,7 +25,7 @@ def create_profile_layer_binding(client):
 def patch_executor(monkeypatch, result):
     calls = []
 
-    async def fake_execute(command):
+    async def fake_execute(command, timeout_ms=None, execution_mode="argv"):
         calls.append(command)
         return dict(result)
 

@@ -28,7 +28,7 @@ def test_v2_runtime_executes_action_records_run_and_enriches_payload(monkeypatch
         assert derived_flat == {"bank_msb": 0, "bank_lsb": 0, "program": 0}
         return binding
 
-    async def fake_execute(command):
+    async def fake_execute(command, execution_mode="argv"):
         calls.append(command)
         return {"ok": True, "stdout": "live"}
 

@@ -146,9 +146,10 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
               notes,
               display_label,
               display_color,
-              display_emoji
+              display_emoji,
+              display_icon
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 layer["profile_id"],
@@ -162,6 +163,7 @@ async def create_layer_binding(layer_id: int, payload: V2BindingCreateIn) -> Dic
                 payload.display_label,
                 payload.display_color,
                 payload.display_emoji,
+                payload.display_icon,
             ),
         )
         binding_id = binding_cursor.lastrowid
@@ -219,28 +221,80 @@ async def activate_layer(layer_id: int) -> Dict[str, Any]:
 @router.delete("/api/layers/{layer_id}")
 async def delete_layer(layer_id: int) -> Dict[str, Any]:
     layer = await _get_layer(layer_id)
-    activated_layer_id = None
+
+    profile = await db_fetchone("SELECT active FROM profiles WHERE id = ?", (layer["profile_id"],))
+    if profile and profile["active"]:
+        count_row = await db_fetchone(
+            "SELECT COUNT(*) AS cnt FROM layers WHERE profile_id = ?",
+            (layer["profile_id"],),
+        )
+        if count_row and count_row["cnt"] <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last layer of the active profile")
 
     async with db_connect() as db:
-        await db.execute("DELETE FROM layers WHERE id = ?", (layer_id,))
+        binding_cur = await db.execute(
+            "SELECT id, action_id, trigger_id FROM bindings_v2 WHERE layer_id = ?",
+            (layer_id,),
+        )
+        binding_rows = await binding_cur.fetchall()
+        binding_ids = [r["id"] for r in binding_rows]
+        action_ids = [r["action_id"] for r in binding_rows]
+        trigger_ids = set(r["trigger_id"] for r in binding_rows)
+        if layer["activation_trigger_id"]:
+            trigger_ids.add(layer["activation_trigger_id"])
+
+        for bid in binding_ids:
+            await db.execute("UPDATE runs SET binding_id = NULL WHERE binding_id = ?", (bid,))
+        await db.execute("UPDATE runs SET layer_id = NULL WHERE layer_id = ?", (layer_id,))
+
+        for bid in binding_ids:
+            await db.execute("DELETE FROM legacy_binding_migrations WHERE binding_v2_id = ?", (bid,))
+
+        await db.execute(
+            "UPDATE layers SET activation_trigger_id = NULL WHERE id = ?", (layer_id,)
+        )
+        await db.execute("DELETE FROM bindings_v2 WHERE layer_id = ?", (layer_id,))
+
+        for tid in trigger_ids:
+            b_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM bindings_v2 WHERE trigger_id = ?", (tid,)
+            )
+            l_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM layers WHERE activation_trigger_id = ?", (tid,)
+            )
+            if (await b_cur.fetchone())["cnt"] == 0 and (await l_cur.fetchone())["cnt"] == 0:
+                await db.execute("DELETE FROM triggers WHERE id = ?", (tid,))
+
+        for aid in set(action_ids):
+            b_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM bindings_v2 WHERE action_id = ?", (aid,)
+            )
+            r_cur = await db.execute(
+                "SELECT COUNT(*) AS cnt FROM runs WHERE action_id = ?", (aid,)
+            )
+            if (await b_cur.fetchone())["cnt"] == 0 and (await r_cur.fetchone())["cnt"] == 0:
+                await db.execute("DELETE FROM actions WHERE id = ?", (aid,))
+
+        activated_layer_id = None
         if layer["active"]:
-            cursor = await db.execute(
+            next_cur = await db.execute(
                 """
-                SELECT id
-                FROM layers
-                WHERE profile_id = ?
+                SELECT id FROM layers
+                WHERE profile_id = ? AND id != ?
                 ORDER BY sort_order, id
                 LIMIT 1
                 """,
-                (layer["profile_id"],),
+                (layer["profile_id"], layer_id),
             )
-            row = await cursor.fetchone()
+            row = await next_cur.fetchone()
             if row:
                 activated_layer_id = row["id"]
                 await db.execute(
                     "UPDATE layers SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (activated_layer_id,),
                 )
+
+        await db.execute("DELETE FROM layers WHERE id = ?", (layer_id,))
         await db.commit()
 
     return {
