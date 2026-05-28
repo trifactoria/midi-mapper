@@ -28,26 +28,29 @@ bash scripts/check.sh
 
 All tests should pass. TypeScript build should succeed.
 
-## 3. Start the stack
+## 3. Start the app
 
-**Browser mode (default):**
+**Desktop app mode (recommended for demo/recording):**
+
+```bash
+bash scripts/run-app.sh
+# Builds frontend if needed, starts backend + production server, opens Tauri window
+```
+
+Requires Rust and cargo-tauri:
+- `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- `cargo install tauri-cli --version '^2'`
+
+First run compiles the Tauri shell (~30-60 seconds). Subsequent runs use cargo's
+incremental cache and start quickly.
+
+**Browser mode (no Rust required):**
 
 ```bash
 bash scripts/dev-stack.sh
 # Backend:  http://127.0.0.1:8765/api/health
 # Frontend: http://localhost:3000/v2
 ```
-
-**Desktop preview (Tauri shell — requires Rust + cargo-tauri):**
-
-```bash
-bash scripts/preview-desktop.sh
-```
-
-The desktop script builds the frontend, starts the backend, then opens a Tauri
-window pointing at the production build. Requires:
-- `cargo` and `rustup` installed
-- `cargo install tauri-cli --version '^2'`
 
 ## 4. Connect a MIDI device
 
@@ -61,7 +64,7 @@ Without a physical controller:
 
 ## 5. Import the demo profile
 
-1. Open `http://localhost:3000/v2` (or the Tauri window).
+1. Open the Tauri window (from `run-app.sh`) or `http://localhost:3000/v2`.
 2. In the sidebar, click the import icon next to Profiles.
 3. Select `examples/demo-workflows.json`.
 4. The "Demo Workflows" profile appears and activates.

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=MIDI Mapper
+Comment=Local MIDI mapping desktop app
+Exec=bash /REPLACE_WITH_ABSOLUTE_PATH/scripts/run-app.sh
+Icon=/REPLACE_WITH_ABSOLUTE_PATH/src-tauri/icons/icon.png
+Terminal=true
+Type=Application
+Categories=Audio;Utility;
+StartupNotify=true

@@ -1,39 +1,96 @@
 # Linux Desktop Packaging
 
-This is the first Linux-first desktop path for MIDI Mapper v2. It keeps the
-existing FastAPI and Next.js development workflow intact and adds a thin Tauri
-v2 shell.
+This document covers the four ways to run MIDI Mapper on Linux and what must
+change before a fully self-contained release package is ready.
 
-## What Works Now
+## Launch Modes
 
-- `bash scripts/dev-desktop.sh` starts the FastAPI backend, the Next.js
-  frontend, and a Tauri desktop window.
-- The Tauri dev window opens the real v2 UI at `http://localhost:3000/v2`.
-- `bash scripts/preview-desktop.sh` builds the frontend, starts `next start`,
-  starts the backend, and opens the same Tauri shell against the production
-  Next server.
-- Browser usage remains unchanged at `http://localhost:3000/v2`.
-- `cargo tauri build` can build the Rust shell, but the produced package is not
-  yet a complete offline MIDI Mapper app.
+| Mode | Command | Next.js | Tauri | Use for |
+|---|---|---|---|---|
+| Browser dev | `bash scripts/dev-stack.sh` | dev server (3000) | no | daily development |
+| Desktop dev | `bash scripts/dev-desktop.sh` | dev server (3000) | yes | Tauri shell development |
+| Desktop app | `bash scripts/run-app.sh` | prod server (3001) | yes | demo, recording, day use |
+| Desktop preview | `bash scripts/preview-desktop.sh` | prod server (3001) | yes | one-off preview |
 
-## What Is Still Manual
+### Browser dev
 
-The backend and frontend are not bundled into the release package yet. The
-current release shell uses `src-tauri/frontend-dist/index.html`, which documents
-that the local services still need to be running.
+```bash
+bash scripts/dev-stack.sh
+# Backend:  http://127.0.0.1:8765/api/health
+# Frontend: http://localhost:3000/v2
+```
 
-The next packaging step is to choose and implement process supervision for:
+No Rust or Tauri required. Uses the Next.js dev server with hot reload. Open the
+URL in any browser.
 
-- FastAPI/uvicorn backend startup and shutdown.
-- Next.js production server or exported static frontend strategy.
-- Runtime database path under the user's application data directory.
-- Python dependency bundling, including `python-rtmidi` native libraries.
+### Desktop dev
+
+```bash
+bash scripts/dev-desktop.sh
+```
+
+Starts the Next.js dev server and opens a Tauri window. Useful when working on
+the Tauri shell itself (Rust side). Hot reload is active — the browser dev
+indicator appears in the Tauri window, which is expected.
+
+### Desktop app (primary demo/use mode)
+
+```bash
+bash scripts/run-app.sh
+```
+
+This is the primary command for running MIDI Mapper as a desktop application:
+
+- Activates the Python venv, verifies dependencies.
+- Checks both ports (8765, 3001) are free before starting.
+- Builds the Next.js frontend if no production build exists (`src/.next`).
+  Skips the build on subsequent runs (delete `src/.next` to force a rebuild).
+- Starts the FastAPI backend and the production Next.js server.
+- Waits for both to be healthy before opening the Tauri window.
+- Cleans up all child processes when the window closes or Ctrl-C is pressed.
+- Does not open a browser tab.
+
+First run compiles the Tauri Rust shell (~30-60 seconds). Subsequent runs use
+cargo's incremental cache and start in seconds.
+
+Custom port:
+
+```bash
+MIDI_MAPPER_APP_PORT=3002 bash scripts/run-app.sh
+```
+
+### Desktop preview
+
+```bash
+bash scripts/preview-desktop.sh
+```
+
+Equivalent to `run-app.sh` but always runs `pnpm build` first. Useful for a
+clean preview from scratch. `run-app.sh` is preferred for regular use because it
+skips the build when one already exists.
+
+## Desktop Launcher (`.desktop` file)
+
+To add MIDI Mapper to your application menu, use the template at
+`examples/midi-mapper.desktop`:
+
+```bash
+# 1. Copy and edit the template
+cp examples/midi-mapper.desktop ~/Desktop/midi-mapper.desktop
+# Replace REPLACE_WITH_ABSOLUTE_PATH with the actual repo path, e.g.:
+sed -i "s|REPLACE_WITH_ABSOLUTE_PATH|$(pwd)|g" ~/Desktop/midi-mapper.desktop
+
+# 2. Install to the application menu
+cp ~/Desktop/midi-mapper.desktop ~/.local/share/applications/
+update-desktop-database ~/.local/share/applications/
+```
+
+The launcher uses `Terminal=true` so startup messages are visible in a terminal
+window. This is intentional until the app is fully self-contained.
 
 ## Dependencies
 
-Install the Linux desktop and MIDI build dependencies before using this path.
-
-Ubuntu/Debian packages:
+**System packages (Ubuntu/Debian):**
 
 ```bash
 sudo apt install -y \
@@ -47,11 +104,13 @@ sudo apt install -y \
   librsvg2-dev \
   libsoup-3.0-dev \
   libwebkit2gtk-4.1-dev \
+  libnotify-bin \
   pkg-config \
-  python3-dev
+  python3-dev \
+  xdotool
 ```
 
-Toolchains:
+**Toolchains:**
 
 ```bash
 # Rust
@@ -64,95 +123,81 @@ cargo install tauri-cli --version '^2'
 corepack enable
 corepack prepare pnpm@latest --activate
 
-# Python dependencies
+# Python venv
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-MIDI runtime note:
+## User Data Path
 
-- `/dev/snd/seq` must be available for ALSA sequencer access.
-- `python-rtmidi` may require ALSA/JACK headers at install time.
+### Current behavior
 
-## Desktop Dev
+The runtime database lives at `./midi_map.db` relative to wherever the script is
+run. This works for development and demo use but is not suitable for a packaged
+application.
+
+```
+./midi_map.db           — runtime database (current)
+./midi_map.db-shm       — SQLite shared memory (auto-created)
+./midi_map.db-wal       — SQLite WAL journal (auto-created)
+```
+
+To keep data separate from the source tree today, set `MIDI_MAPPER_DB_PATH`:
 
 ```bash
-bash scripts/dev-desktop.sh
+export MIDI_MAPPER_DB_PATH="$HOME/.local/share/midi-mapper/midi_map.db"
+mkdir -p "$HOME/.local/share/midi-mapper"
+MIDI_MAPPER_DB_PATH="$HOME/.local/share/midi-mapper/midi_map.db" bash scripts/run-app.sh
 ```
 
-This runs:
+### What must change before release packaging
 
-- Backend: `http://127.0.0.1:8765/api/health`
-- Frontend: `http://localhost:3000/v2` via `next dev`
-- Tauri shell: opens `http://localhost:3000/v2`
+For a packaged `.deb` or AppImage, the database must live in the user's XDG data
+directory:
 
-This mode is intentionally a development mode. It uses the Next.js dev server,
-so development indicators may appear in the Tauri window. That confirms the
-desktop shell is loading the local dev UI; it is not the final packaged
-production app.
-
-## Desktop Preview
-
-```bash
-bash scripts/preview-desktop.sh
+```
+$XDG_DATA_HOME/midi-mapper/midi_map.db
+# typically: ~/.local/share/midi-mapper/midi_map.db
 ```
 
-This runs:
+Steps needed before packaging works correctly:
 
-- `pnpm build` in `src/`
-- Backend: `http://127.0.0.1:8765/api/health`
-- Frontend: `http://localhost:3001/v2` via `next start`
-- Tauri shell: opens `http://localhost:3001/v2`
+1. **Backend startup defaults to XDG path.** `backend/config.py` should default
+   `MIDI_MAPPER_DB_PATH` to `$XDG_DATA_HOME/midi-mapper/midi_map.db` and create
+   the directory on first run.
 
-Preview mode is closer to the intended production visual experience because it
-does not use the Next.js dev server. It still is not self-contained packaging:
-the backend and frontend are local child processes started by the script.
+2. **Tauri sets the env var.** The Tauri shell (`src-tauri/src/`) needs to
+   resolve the XDG path and pass it to the backend subprocess via environment
+   variable before starting the backend.
 
-Preview mode intentionally uses port 3001 so it does not silently attach to a
-dev server already running on port 3000. If the Next.js dev indicator appears
-in the Tauri window during preview, you are probably connected to a dev server
-instead of the preview server. Confirm the script output says:
+3. **Migration on first packaged run.** If `./midi_map.db` exists but the XDG
+   path does not, a first-run migration can offer to copy the data.
 
-```text
-Frontend: http://localhost:3001/v2
-```
+4. **Profile export before switching.** Until migration is implemented, export
+   all profiles before moving to a packaged version.
 
-To use another preview port:
+## What Works Now vs. Packaged Target
 
-```bash
-MIDI_MAPPER_PREVIEW_PORT=3002 bash scripts/preview-desktop.sh
-```
+| Concern | Current (`run-app.sh`) | Packaged target |
+|---|---|---|
+| Frontend | `next start` child process | Static assets bundled in Tauri shell |
+| Backend | `uvicorn` child process | Supervised subprocess or sidecar |
+| Database | `./midi_map.db` (CWD) | `~/.local/share/midi-mapper/` |
+| Python deps | `.venv/` in repo | Bundled with PyInstaller or similar |
+| Startup | bash script | Tauri app entry point |
+| Port conflicts | Script checks and fails | Not applicable (bundled) |
 
-The existing scripts still work independently:
+## Building the Shell Package
 
-```bash
-bash scripts/dev-backend.sh
-bash scripts/dev-frontend.sh
-bash scripts/dev-stack.sh
-bash scripts/check.sh
-```
-
-## Linux Build Attempt
+The Tauri shell itself can be packaged, but the result is not yet a complete
+offline app (see the table above):
 
 ```bash
 cargo tauri build --bundles deb
-```
-
-or:
-
-```bash
 cargo tauri build --bundles appimage
 ```
 
-Current limitation: this builds the shell package only. It does not yet bundle
-the FastAPI backend, the Next.js server, the Python virtual environment, or the
-runtime SQLite database lifecycle.
+Output goes to `src-tauri/target/release/bundle/`.
 
-Before a real self-contained package, the desktop path still needs:
-
-- Tauri-side process supervision for backend/frontend startup and shutdown.
-- A production frontend strategy, either bundled static assets where feasible or
-  a bundled local Next server.
-- A user data directory for the runtime SQLite database.
-- Python dependency bundling, including `python-rtmidi` and native ALSA/JACK
-  libraries.
+Before these packages work as a standalone app, the backend and frontend process
+lifecycle must be managed by the Tauri shell rather than a shell script.

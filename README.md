@@ -113,22 +113,35 @@ bash scripts/check.sh
 
 The v2 interface is at **`http://localhost:3000/v2`**.
 
-## Desktop Preview (Tauri)
+## Running as a Desktop App
 
-A Tauri shell wraps the production frontend build for a windowed experience:
+To run MIDI Mapper as a desktop application (Tauri window, no browser):
 
 ```bash
-bash scripts/preview-desktop.sh
+bash scripts/run-app.sh
 ```
 
-This builds the Next.js app, starts the backend, then opens a Tauri window.
-Requires Rust (`rustup`) and the Tauri CLI:
+This script:
+- Verifies all dependencies
+- Builds the frontend if needed (skips rebuild on subsequent runs)
+- Starts backend + production frontend
+- Waits for both to be healthy, then opens the Tauri window
+- Cleans up all child processes when the window closes
+
+First run compiles the Tauri Rust shell (~30-60 seconds). Subsequent runs use
+the cargo cache and start in seconds.
+
+Requires Rust and the Tauri CLI:
 
 ```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 cargo install tauri-cli --version '^2'
 ```
 
 The browser dev mode (`scripts/dev-stack.sh`) has no Rust dependency.
+
+See `docs/packaging-linux.md` for all launch modes, the desktop launcher
+(`.desktop` file) setup, and the packaging roadmap.
 
 ## Demo Profile
 
