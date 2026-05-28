@@ -180,7 +180,50 @@ def test_profile_import_rejects_unsupported_action_type(client):
     response = client.post("/api/profiles/import", json={"payload": exported})
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Action type must be command or delay"
+    assert "python" in response.json()["detail"]
+
+
+def test_import_profile_with_native_action_types(client):
+    """Native action types (notification, open_url, open_app, hotkey) survive import and re-export."""
+    payload = {
+        "schema_version": 1,
+        "kind": "midi-mapper-v2-profile",
+        "profile": {"name": "Native Demo", "description": ""},
+        "layers": [{"key": "layer_0", "name": "Live", "sort_order": 0, "color": None, "active": 1}],
+        "triggers": [
+            {"key": "trigger_0", "event_type": "note_on", "channel": None, "note": 48,
+             "velocity_min": 1, "velocity_max": 127},
+            {"key": "trigger_1", "event_type": "note_on", "channel": None, "note": 50,
+             "velocity_min": 1, "velocity_max": 127},
+        ],
+        "actions": [
+            {"key": "action_0", "type": "notification", "label": "Notify",
+             "title": "Hello", "message": "World", "urgency": "low"},
+            {"key": "action_1", "type": "open_url", "label": "GitHub",
+             "command": "https://github.com"},
+        ],
+        "bindings_v2": [
+            {"layer_key": "layer_0", "trigger_key": "trigger_0", "action_key": "action_0",
+             "action_steps": [{"action_key": "action_0", "execution_order": 0, "enabled": 1}],
+             "enabled": 1, "require_armed": 0, "cooldown_ms": 250, "notes": "", "display_label": "Notify"},
+            {"layer_key": "layer_0", "trigger_key": "trigger_1", "action_key": "action_1",
+             "action_steps": [{"action_key": "action_1", "execution_order": 0, "enabled": 1}],
+             "enabled": 1, "require_armed": 0, "cooldown_ms": 500, "notes": "", "display_label": "Open GitHub"},
+        ],
+    }
+    resp = client.post("/api/profiles/import", json={"payload": payload})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+
+    exported = client.get(f"/api/profiles/{body['profile_id']}/export").json()
+    by_type = {a["type"]: a for a in exported["actions"]}
+    assert "notification" in by_type
+    assert "open_url" in by_type
+    assert by_type["notification"]["title"] == "Hello"
+    assert by_type["notification"]["message"] == "World"
+    assert by_type["notification"]["urgency"] == "low"
+    assert by_type["open_url"]["command"] == "https://github.com"
 
 
 def test_profile_import_preserves_display_icon(client):

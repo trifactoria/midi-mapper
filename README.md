@@ -1,66 +1,77 @@
 # MIDI Mapper
 
-A local MIDI-to-command automation tool. Map notes and CC events from a MIDI
-controller to shell commands — media controls, OBS scene switches, desktop
-shortcuts, or anything you can run from a terminal.
+A local MIDI-to-action automation tool for Linux. Map notes and CC events from a
+MIDI controller to shell commands, desktop notifications, URLs, apps, or keyboard
+shortcuts — anything you can trigger from your desktop.
 
 A FastAPI backend listens for MIDI input, stores profiles, layers, and bindings
 in SQLite, and streams events over WebSocket. A Next.js frontend provides a live
-note grid, capture-based binding editor, run history, and device selection.
+note grid, capture-based binding editor, run history, and device selection. A
+Tauri desktop shell is available for a self-contained window experience.
 
-**This is an active personal tool, not a finished product.** Core plumbing works.
-Rough edges exist. The UI and API are still evolving.
+**Linux-first, local-first.** All data stays on your machine. No cloud, no
+accounts, no network calls. Built and tested on Ubuntu/Debian. Cross-platform
+support is not planned.
+
+**Active personal tool — not a polished product.** Core workflows are stable.
+Rough edges exist.
 
 ## Current State
 
-- **Core MIDI runtime: operational.** Live note/CC events stream to the frontend
-  via WebSocket. Device selection persists.
-- **v2 binding model: operational.** Profiles → layers → bindings hierarchy.
-  Create, rename, and activate profiles and layers. Create and delete bindings
-  via the capture UI. Run history is recorded and clearable.
-- **Action execution: working but minimal.** Commands run as direct `argv`
-  (no shell by default). Shell mode is available via config. No retry, timeout
-  enforcement, or output capture beyond preview.
-- **Action presets: partial.** The UI offers one-click presets for `playerctl`,
-  `obs-cmd`, and `notify-send`. These require the respective tools to be
-  installed separately.
-- **Frontend/backend integration: largely complete.** No mock data leak when
-  backend is reachable. Empty states are handled.
-- **Legacy runtime: still present internally.** The original context/binding
-  model (`/api/contexts`, `app.py`) still runs behind the shim. It is not
-  exposed in the v2 UI and is not the product direction.
-- **Packaging/distribution: not started.** No systemd unit, no Flatpak, no
-  installer. Intended to be run from a working directory.
-- **Cross-platform: untested.** ALSA/JACK native headers are required for
-  `python-rtmidi`. This is a Linux-first tool.
+- **MIDI runtime:** Live note/CC events stream to the frontend via WebSocket.
+  Device selection persists across restarts.
+- **v2 binding model:** Profiles → layers → bindings hierarchy. Create, rename,
+  activate, and delete profiles and layers. Bindings support enable/disable,
+  cooldown, armed mode, and per-binding notes.
+- **Native action types:** Four first-class action types beyond shell commands —
+  desktop notification (`notify-send`), open URL (`xdg-open`), open app
+  (detached), and hotkey (`xdotool`). All dispatch correctly from the UI and
+  runtime.
+- **Action sequencing:** Bindings support multi-step action sequences with
+  ordering, per-step enable/disable, and configurable delays between steps.
+- **Import/export:** Profiles export to JSON and import cleanly, including native
+  action types and multi-step sequences.
+- **Desktop preview:** `scripts/preview-desktop.sh` builds the frontend and opens
+  a Tauri shell pointing at a production build. Requires Rust + cargo-tauri.
+  Self-contained packaging (Flatpak, AppImage, installer) is not yet implemented.
+- **Legacy runtime:** The original context/binding model (`app.py`) still runs
+  internally. It is not exposed in the v2 UI and is not the product direction.
 
 ## Prerequisites
 
-**System (Linux / Ubuntu)**
+**System (Linux / Ubuntu/Debian)**
 
 ```bash
-sudo apt install -y build-essential pkg-config python3-dev libasound2-dev libjack-jackd2-dev
+sudo apt install -y \
+  build-essential pkg-config python3-dev \
+  libasound2-dev libjack-jackd2-dev \
+  libnotify-bin \
+  xdotool
 ```
 
-These native headers are required for `python-rtmidi`. The dev script checks for
-`/dev/snd/seq` and warns if it is missing.
+`libasound2-dev` and `libjack-jackd2-dev` are required for `python-rtmidi`.
+`libnotify-bin` and `xdotool` are optional but required for the notification and
+hotkey action types respectively. Both fail gracefully with a readable error if
+missing.
 
-**Python**: 3.11 or newer  
-**Node.js**: 20 or newer  
-**pnpm**: install via Corepack if missing
+- **Python:** 3.11 or newer
+- **Node.js:** 20 or newer
+- **pnpm:** install via Corepack if missing
 
 ```bash
 corepack enable
 corepack prepare pnpm@latest --activate
 ```
 
-**Optional external tools** (for action presets):
+**Optional external tools** (for additional action presets):
 
 | Preset | Tool | Install |
 |---|---|---|
+| Desktop notification | `notify-send` | `sudo apt install libnotify-bin` |
+| Open URL / app | `xdg-open` | included in `xdg-utils` (usually pre-installed) |
+| Hotkey / shortcut | `xdotool` | `sudo apt install xdotool` |
 | Media controls | `playerctl` | `sudo apt install playerctl` |
 | OBS scene/recording | `obs-cmd` | `pip install obs-cmd` |
-| Desktop notifications | `notify-send` | included in `libnotify-bin` |
 
 ## Setup
 
@@ -102,21 +113,63 @@ bash scripts/check.sh
 
 The v2 interface is at **`http://localhost:3000/v2`**.
 
-## Quick Demo
+## Desktop Preview (Tauri)
+
+A Tauri shell wraps the production frontend build for a windowed experience:
+
+```bash
+bash scripts/preview-desktop.sh
+```
+
+This builds the Next.js app, starts the backend, then opens a Tauri window.
+Requires Rust (`rustup`) and the Tauri CLI:
+
+```bash
+cargo install tauri-cli --version '^2'
+```
+
+The browser dev mode (`scripts/dev-stack.sh`) has no Rust dependency.
+
+## Demo Profile
+
+A ready-to-import demo profile is included:
+
+```
+examples/demo-workflows.json
+```
+
+It contains four bindings on notes C3, E3, G3, B3 (MIDI notes 48, 52, 55, 59):
+
+| Note | Action | What it does |
+|------|--------|--------------|
+| C3 | Notification | "Recording started" via notify-send |
+| E3 | Open URL | Opens GitHub in your default browser |
+| G3 | Open App | Launches Firefox (edit to your app) |
+| B3 | Wait + Command | Waits 500ms, then echoes "Scene ready" |
+
+**To import:**
+
+1. Start the stack and open `http://localhost:3000/v2`.
+2. In the sidebar, click the import icon next to Profiles.
+3. Select `examples/demo-workflows.json`.
+4. The "Demo Workflows" profile activates with the "Live Workflows" layer.
+
+Without a MIDI device, use Quick Bind → Test Action or the note grid in Mouse
+Mode to trigger each binding.
+
+See `docs/demo-checklist.md` for a full demo and recording guide.
+
+## Quick Start (no MIDI device)
 
 1. Start the stack: `bash scripts/dev-stack.sh`
 2. Open `http://localhost:3000/v2`
-3. In the sidebar, click **+** next to Profiles to create a profile, then **+**
-   next to Layers to create a layer.
-4. In the topbar, select your MIDI input device.
-5. In the Quick Bind panel, click **Capture Next** and press a note on your
-   controller.
-6. Fill in a command (e.g. `echo "hello"`) and click **Create Binding**.
-7. The binding appears in Active Bindings. Click **Test Action** to trigger it
-   manually.
-8. Observe the result in the Run History panel.
+3. Create a profile and layer in the sidebar, or import the demo profile.
+4. In Quick Bind, choose a preset from the "Desktop" group (notification, URL,
+   app, or hotkey).
+5. Fill in the field and click **Test Action** to run it immediately.
+6. Click **Create Binding** to save — assign a MIDI trigger later.
 
-To seed demo data without a MIDI device:
+Or seed the database directly (no backend needed):
 
 ```bash
 .venv/bin/python scripts/seed-demo-v2.py
@@ -135,14 +188,14 @@ Key `.env` variables:
 | `NEXT_PUBLIC_API_BASE` | `http://127.0.0.1:8765` | Frontend → backend URL |
 
 Shell mode is disabled by default. When enabled, commands run through `bash -lc`.
-Review every binding command before enabling it.
+Review every binding before enabling it.
 
 ## Security Notes
 
 - Bindings execute local commands. Treat every binding as code that runs on your
   machine when a MIDI event fires.
-- Run the backend on `127.0.0.1`. Do not expose it to a network without reviewing
-  the execution risk.
+- Run the backend on `127.0.0.1`. Do not expose it to a network without
+  reviewing the execution risk.
 - Do not commit `.env`, the runtime database, or binding exports that contain
   private paths or credentials.
 
@@ -154,41 +207,41 @@ Review every binding command before enabling it.
 ├── backend/                # FastAPI application package
 │   ├── main.py             # App factory, MIDI pump, lifecycle
 │   ├── api/                # Route modules (profiles, layers, bindings, runs, …)
-│   ├── actions/            # Command execution, run recording, notifications
+│   ├── actions/            # Command execution, run recording, executor
 │   ├── midi/               # MIDI listener and state
 │   └── migrations.py       # SQLite schema migrations
+├── examples/               # Importable demo profiles
+│   └── demo-workflows.json
 ├── tests/                  # pytest test suite
-├── scripts/                # Dev stack helpers (dev-stack.sh, check.sh, …)
-├── docs/                   # Dev notes, architecture docs
+├── scripts/                # Dev helpers (dev-stack.sh, check.sh, preview-desktop.sh, …)
+├── docs/                   # Dev notes, architecture docs, demo checklist
 ├── src/                    # Next.js frontend
 │   └── components/
 │       ├── layout/         # V2Shell — top-level app shell
 │       ├── mapping/        # Note grid, CC faders, Quick Bind, Run History
 │       ├── sidebar/        # Profile and layer selector
 │       └── v2/             # API client, data hooks, types, adapters
+├── src-tauri/              # Tauri desktop shell (Rust)
 ├── requirements.txt        # Backend runtime dependencies
 ├── requirements-dev.txt    # Backend + test dependencies
 └── .env.example            # Configuration template
 ```
 
-## Roadmap / Planned Work
+## Roadmap
 
 Near-term:
 
-- Profile and layer delete
-- Better action feedback (stdout/stderr display in run detail)
-- Binding enable/disable toggle in the UI
-- Binding import/export
+- Action execution hardening (timeout enforcement, retry on failure)
+- Per-device profiles (bind triggers to specific MIDI port names)
+- Better preset integrations (tool version detection, install hints)
+- Visual binding management improvements
 
 Longer-term:
 
-- Action execution hardening (timeout enforcement, retry)
-- Better preset integrations (more tools, version detection)
-- Multi-device workflows (per-device profiles)
-- Packaging/distribution (systemd unit or similar)
-- Visual binding management improvements
+- Self-contained packaging (AppImage or Flatpak via Tauri build)
+- Multi-window / multi-profile session support
 
 Not planned:
 
 - Cloud sync or remote access
-- Non-Linux platform support (no near-term effort)
+- macOS or Windows support

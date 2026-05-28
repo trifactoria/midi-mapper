@@ -57,10 +57,13 @@ def _export_key(prefix: str, index: int) -> str:
     return f"{prefix}_{index}"
 
 
+_SUPPORTED_ACTION_TYPES = {"command", "delay", "notification", "open_url", "open_app", "hotkey"}
+
+
 def _require_command_action(action: Dict[str, Any]) -> None:
     action_type = action.get("type", "command")
-    if action_type not in ("command", "delay"):
-        raise HTTPException(status_code=400, detail="Action type must be command or delay")
+    if action_type not in _SUPPORTED_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported action type: {action_type!r}")
     if action_type == "delay" and int(action.get("duration_ms") or -1) < 0:
         raise HTTPException(status_code=400, detail="Delay duration_ms must be 0 or greater")
 
@@ -391,7 +394,10 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
           a.cooldown_ms AS action_cooldown_ms,
           a.allow_concurrent,
           a.notify_text,
-          a.notify_emoji
+          a.notify_emoji,
+          a.title,
+          a.message,
+          a.urgency
         FROM bindings_v2 b
         JOIN triggers t ON t.id = b.trigger_id
         JOIN actions a ON a.id = b.action_id
@@ -427,7 +433,10 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
           a.cooldown_ms,
           a.allow_concurrent,
           a.notify_text,
-          a.notify_emoji
+          a.notify_emoji,
+          a.title,
+          a.message,
+          a.urgency
         FROM binding_actions ba
         JOIN actions a ON a.id = ba.action_id
         JOIN bindings_v2 b ON b.id = ba.binding_id
@@ -481,6 +490,9 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
                 "allow_concurrent": row["allow_concurrent"],
                 "notify_text": row["notify_text"],
                 "notify_emoji": row["notify_emoji"],
+                "title": row["title"],
+                "message": row["message"],
+                "urgency": row["urgency"],
             })
         action_steps = []
         for step in steps_by_binding.get(row["id"], []):
@@ -502,6 +514,9 @@ async def export_profile(profile_id: int) -> Dict[str, Any]:
                     "allow_concurrent": step["allow_concurrent"],
                     "notify_text": step["notify_text"],
                     "notify_emoji": step["notify_emoji"],
+                    "title": step["title"],
+                    "message": step["message"],
+                    "urgency": step["urgency"],
                 })
             action_steps.append({
                 "action_key": action_keys[step["action_id"]],
