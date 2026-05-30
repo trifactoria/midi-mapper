@@ -31,9 +31,14 @@ Rough edges exist.
   ordering, per-step enable/disable, and configurable delays between steps.
 - **Import/export:** Profiles export to JSON and import cleanly, including native
   action types and multi-step sequences.
-- **Desktop preview:** `scripts/preview-desktop.sh` builds the frontend and opens
-  a Tauri shell pointing at a production build. Requires Rust + cargo-tauri.
-  Self-contained packaging (Flatpak, AppImage, installer) is not yet implemented.
+- **Desktop app:** `scripts/run-app.sh` starts backend + frontend and opens a
+  Tauri window — the primary demo command. Requires Rust + cargo-tauri + Python
+  venv.
+- **Package build:** `scripts/build-package.sh` produces an AppImage and .deb
+  that bundle the Tauri shell and Next.js frontend as static files. The Python
+  backend is not bundled and must be started separately. A fully self-contained
+  package (backend frozen into the AppImage) requires PyInstaller bundling and
+  Tauri sidecar wiring — see `docs/packaging-linux.md`.
 - **Legacy runtime:** The original context/binding model (`app.py`) still runs
   internally. It is not exposed in the v2 UI and is not the product direction.
 
@@ -251,7 +256,7 @@ Near-term:
 
 Longer-term:
 
-- Self-contained packaging (AppImage or Flatpak via Tauri build)
+- Fully self-contained AppImage (Python backend bundled via PyInstaller sidecar)
 - Multi-window / multi-profile session support
 
 Not planned:

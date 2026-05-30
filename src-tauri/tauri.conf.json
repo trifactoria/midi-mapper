@@ -14,6 +14,7 @@
       {
         "label": "main",
         "title": "MIDI Mapper",
+        "url": "tauri://localhost/v2/",
         "width": 1760,
         "height": 990,
         "minWidth": 1280,
