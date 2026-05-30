@@ -148,15 +148,40 @@ The browser dev mode (`scripts/dev-stack.sh`) has no Rust dependency.
 See `docs/packaging-linux.md` for all launch modes, the desktop launcher
 (`.desktop` file) setup, and the packaging roadmap.
 
-## Demo Profile
+## Demo Profiles
 
-A ready-to-import demo profile is included:
+Two ready-to-import profiles are included under `examples/`.
 
+### demo-profile.json
+
+Two-layer profile covering the main action types:
+
+| Trigger | Layer | Action | What it does |
+|---------|-------|--------|--------------|
+| C4 (note 60) | Keys | Multi-step | `echo` → wait 3 s → desktop notification |
+| D4 (note 62) | Keys | Hotkey | Sends `Ctrl+M` (mute in Zoom/Meet/Teams) |
+| CC 7 (Volume) | Faders | Command | Logs CC 7 events to stdout |
+
+**To import:**
+
+1. Start the stack and open `http://localhost:3000/v2`.
+2. In the sidebar, click the import icon (⬆) next to Profiles.
+3. Select `examples/demo-profile.json`.
+4. The "Demo Profile" activates with the "Keys" layer selected.
+
+Activate the "Faders" layer in the sidebar to reach the CC 7 binding. Without a
+MIDI device, use **Quick Bind → Test Action** or the note grid in **Mouse Mode**
+to trigger each binding manually.
+
+Dependencies for all steps to work:
+
+```bash
+sudo apt install libnotify-bin xdotool
 ```
-examples/demo-workflows.json
-```
 
-It contains four bindings on notes C3, E3, G3, B3 (MIDI notes 48, 52, 55, 59):
+### demo-workflows.json
+
+Flat single-layer profile with four bindings on notes C3/E3/G3/B3 (48/52/55/59):
 
 | Note | Action | What it does |
 |------|--------|--------------|
@@ -165,15 +190,7 @@ It contains four bindings on notes C3, E3, G3, B3 (MIDI notes 48, 52, 55, 59):
 | G3 | Open App | Launches Firefox (edit to your app) |
 | B3 | Wait + Command | Waits 500ms, then echoes "Scene ready" |
 
-**To import:**
-
-1. Start the stack and open `http://localhost:3000/v2`.
-2. In the sidebar, click the import icon next to Profiles.
-3. Select `examples/demo-workflows.json`.
-4. The "Demo Workflows" profile activates with the "Live Workflows" layer.
-
-Without a MIDI device, use Quick Bind → Test Action or the note grid in Mouse
-Mode to trigger each binding.
+Import the same way — select `examples/demo-workflows.json` in the import dialog.
 
 See `docs/demo-checklist.md` for a full demo and recording guide.
 
@@ -229,7 +246,8 @@ Review every binding before enabling it.
 │   ├── midi/               # MIDI listener and state
 │   └── migrations.py       # SQLite schema migrations
 ├── examples/               # Importable demo profiles
-│   └── demo-workflows.json
+│   ├── demo-profile.json   # Two-layer demo: sequence, hotkey, CC
+│   └── demo-workflows.json # Flat single-layer demo (notification, URL, app)
 ├── tests/                  # pytest test suite
 ├── scripts/                # Dev helpers (dev-stack.sh, check.sh, preview-desktop.sh, …)
 ├── docs/                   # Dev notes, architecture docs, demo checklist
