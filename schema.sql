@@ -126,6 +126,9 @@ CREATE TABLE IF NOT EXISTS actions (
   allow_concurrent INTEGER NOT NULL DEFAULT 0,
   notify_text TEXT NOT NULL DEFAULT '',
   notify_emoji TEXT NOT NULL DEFAULT '',
+  title TEXT,
+  message TEXT,
+  urgency TEXT,
   legacy_binding_id INTEGER REFERENCES bindings(id),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -177,6 +180,7 @@ CREATE TABLE IF NOT EXISTS runs (
   stdout_preview TEXT NOT NULL DEFAULT '',
   stderr_preview TEXT NOT NULL DEFAULT '',
   error_message TEXT NOT NULL DEFAULT '',
+  session_id TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

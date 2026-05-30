@@ -109,6 +109,7 @@ export function V2Shell() {
     simulateNote,
     simulateCc,
     testAction,
+    testTriggerGroup,
     testActionPreview,
     addDelayStep,
     addCommandStep,
@@ -221,6 +222,7 @@ export function V2Shell() {
                   onToggleBindingEnabled={(id) => void toggleBindingEnabled(id)}
                   onDuplicateBinding={duplicateBinding}
                   onTestAction={testAction}
+                  onTestTriggerGroup={testTriggerGroup}
                   onTestActionPreview={testActionPreview}
                   onDeleteBinding={deleteBinding}
                   onClearRuns={clearRuns}

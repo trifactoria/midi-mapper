@@ -379,6 +379,10 @@ export const v2Api = {
   setKeygrab: (enabled: boolean) => apiPost<{ ok: boolean; keygrab: boolean }>(`/api/keygrab/set?enabled=${String(enabled)}`),
   dryRunAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/dry_run`),
   testAction: (actionId: string) => apiPost<BackendActionRunResult>(`/api/actions/${actionId}/test`),
+  testTriggerGroup: (bindingId: string) =>
+    apiPost<{ ok: boolean; session_id?: string; steps: BackendActionRunResult[] }>(
+      `/api/bindings/${bindingId}/test-trigger-group`,
+    ),
   testActionPreview: (payload: BackendActionPreviewPayload) =>
     apiPost<BackendActionRunResult>("/api/actions/preview/test", payload),
   createBindingAction: (bindingId: string, payload: BackendBindingActionCreatePayload) =>

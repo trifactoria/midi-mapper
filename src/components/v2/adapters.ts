@@ -303,6 +303,17 @@ export function groupRunsIntoSessions(runs: V2RunSummary[]): V2ExecutionSession[
     }
   }
 
+  // Sort each session's steps oldest-first so the console renders them in execution order.
+  for (const session of sessionMap.values()) {
+    session.steps.sort((a, b) => {
+      if (!a.startedAt) return 1;
+      if (!b.startedAt) return -1;
+      return a.startedAt.localeCompare(b.startedAt);
+    });
+  }
+
+  // Return newest sessions first so slice(0, N) keeps the most recent N sessions.
+  // ConsolePanel reverses this slice before rendering to show oldest at top.
   return [...sessionMap.values(), ...singletons].sort((a, b) => {
     if (!a.startedAt) return 1;
     if (!b.startedAt) return -1;

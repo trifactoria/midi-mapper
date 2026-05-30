@@ -1,13 +1,15 @@
 import asyncio
+import json
 import shlex
 import time
+import uuid
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.actions.executor import execute_hotkey, execute_notification, safe_execute_command
-from backend.actions.history import record_v2_action_test_run
+from backend.actions.history import record_v2_action_run, record_v2_action_test_run
 from backend.db import db_connect, db_fetchall, db_fetchone
 
 _NATIVE_ACTION_TYPES = {"notification", "open_url", "open_app", "hotkey"}
@@ -519,3 +521,159 @@ async def test_action(action_id: int) -> Dict[str, Any]:
     result["summary"] = summary
     result["run_id"] = run_id
     return result
+
+
+@router.post("/api/bindings/{binding_id}/test-trigger-group")
+async def test_trigger_group(binding_id: int) -> Dict[str, Any]:
+    """Execute the full ordered trigger-group sequence for a binding, honoring delays.
+
+    Replicates the live MIDI execution path so that tile clicks and real MIDI
+    produce identical sequencing behaviour: one ordered run, waits block later steps.
+    """
+    seed = await db_fetchone(
+        """
+        SELECT b.id, b.profile_id, b.layer_id, b.trigger_id, b.action_id,
+               t.event_type, t.channel, t.note, t.controller,
+               t.value_min, t.value_max, t.velocity_min, t.velocity_max,
+               t.port_name
+        FROM bindings_v2 b
+        JOIN triggers t ON t.id = b.trigger_id
+        WHERE b.id = ?
+        """,
+        (binding_id,),
+    )
+    if not seed:
+        raise HTTPException(status_code=404, detail="Binding not found")
+    seed = dict(seed)
+
+    group_bindings = await db_fetchall(
+        """
+        SELECT b2.id AS binding_id, b2.profile_id, b2.layer_id,
+               b2.trigger_id, b2.action_id
+        FROM bindings_v2 b2
+        JOIN triggers t ON t.id = b2.trigger_id
+        WHERE b2.layer_id = ?
+          AND b2.enabled = 1
+          AND t.event_type = ?
+          AND COALESCE(t.channel, -1)      = COALESCE(?, -1)
+          AND COALESCE(t.note, -1)         = COALESCE(?, -1)
+          AND COALESCE(t.controller, -1)   = COALESCE(?, -1)
+          AND COALESCE(t.value_min, -1)    = COALESCE(?, -1)
+          AND COALESCE(t.value_max, -1)    = COALESCE(?, -1)
+          AND COALESCE(t.velocity_min, -1) = COALESCE(?, -1)
+          AND COALESCE(t.velocity_max, -1) = COALESCE(?, -1)
+          AND COALESCE(t.port_name, '')    = COALESCE(?, '')
+        ORDER BY b2.id
+        """,
+        (
+            seed["layer_id"], seed["event_type"],
+            seed["channel"], seed["note"], seed["controller"],
+            seed["value_min"], seed["value_max"],
+            seed["velocity_min"], seed["velocity_max"],
+            seed["port_name"],
+        ),
+    )
+    if not group_bindings:
+        return {"ok": True, "skipped": True, "steps": [], "reason": "no enabled bindings in group"}
+
+    group_actions: list[Dict[str, Any]] = []
+    for gb in group_bindings:
+        group_actions.extend(await _list_binding_steps(int(gb["binding_id"])))
+    group_actions.sort(key=lambda s: (
+        s.get("execution_order") if s.get("execution_order") is not None else 0,
+        s.get("binding_id") if s.get("binding_id") is not None else 0,
+        s.get("binding_action_id") if s.get("binding_action_id") is not None else 0,
+    ))
+
+    enabled_steps = [s for s in group_actions if s.get("enabled", 1)]
+    if not enabled_steps:
+        return {"ok": True, "skipped": True, "steps": [], "reason": "all steps disabled"}
+
+    binding_meta: Dict[int, Dict[str, Any]] = {
+        int(gb["binding_id"]): dict(gb) for gb in group_bindings
+    }
+    trigger_snapshot = json.dumps({
+        "event_type": seed["event_type"],
+        "channel": seed["channel"],
+        "note": seed["note"],
+        "controller": seed["controller"],
+        "port_name": seed["port_name"],
+        "simulated": True,
+    })
+    session_id = uuid.uuid4().hex
+    sequence_results: list[Dict[str, Any]] = []
+    overall_ok = True
+
+    for step in enabled_steps:
+        step_type = step.get("type", "command")
+        step_action_id = int(step.get("action_id") or seed["action_id"])
+        step_binding_id = int(step.get("binding_id") or binding_id)
+        meta = binding_meta.get(step_binding_id, {})
+        step_profile_id = int(meta.get("profile_id") or seed["profile_id"])
+        step_layer_id = int(meta.get("layer_id") or seed["layer_id"])
+        started_at = time.time()
+
+        if step_type == "delay":
+            duration_ms = max(0, int(step.get("duration_ms") or 0))
+            await asyncio.sleep(duration_ms / 1000)
+            result: Dict[str, Any] = {"ok": True, "duration_ms": duration_ms, "summary": f"Wait {duration_ms}ms"}
+            action_summary = result["summary"]
+        elif step_type == "command" and step.get("command"):
+            command = step["command"]
+            result = await safe_execute_command(
+                command,
+                execution_mode=step.get("execution_mode", "argv"),
+                timeout_ms=step.get("timeout_ms"),
+                working_directory=step.get("working_directory"),
+            )
+            result["command"] = command
+            action_summary = command
+        elif step_type == "notification":
+            title = (step.get("title") or "").strip() or step.get("label") or "Notification"
+            message_text = (step.get("message") or "").strip()
+            urgency = step.get("urgency") or None
+            result = await execute_notification(title, message_text, urgency)
+            action_summary = f"Notify: {title}"
+        elif step_type == "open_url":
+            url = (step.get("command") or "").strip()
+            if url:
+                result = await safe_execute_command(f"xdg-open {shlex.quote(url)}", execution_mode="detached")
+            else:
+                result = {"ok": False, "error": "No URL specified", "stdout": "", "stderr": ""}
+            action_summary = f"Open URL: {url}"
+        elif step_type == "open_app":
+            app_cmd = (step.get("command") or "").strip()
+            if app_cmd:
+                result = await safe_execute_command(app_cmd, execution_mode="detached")
+            else:
+                result = {"ok": False, "error": "No command", "stdout": "", "stderr": ""}
+            app_name = app_cmd.split()[0] if app_cmd else "app"
+            action_summary = f"Open App: {app_name}"
+        elif step_type == "hotkey":
+            shortcut = (step.get("command") or "").strip()
+            result = await execute_hotkey(shortcut)
+            action_summary = f"Hotkey: {shortcut}"
+        else:
+            result = {"ok": True, "skipped": True, "summary": "Skipped"}
+            action_summary = result["summary"]
+
+        run_id = await record_v2_action_run(
+            action_id=step_action_id,
+            binding_id=step_binding_id,
+            profile_id=step_profile_id,
+            layer_id=step_layer_id,
+            trigger_snapshot_json=trigger_snapshot,
+            action_summary=action_summary,
+            started_at=started_at,
+            result=result,
+            session_id=session_id,
+        )
+        result["run_id"] = run_id
+        result["action_id"] = step_action_id
+        result["binding_id"] = step_binding_id
+        result["execution_order"] = step.get("execution_order")
+        sequence_results.append(result)
+        if not result.get("ok") and not result.get("skipped"):
+            overall_ok = False
+
+    return {"ok": overall_ok, "session_id": session_id, "steps": sequence_results}

@@ -157,7 +157,7 @@ export function ConsolePanel({ runs, onClose, onClearRuns }: Props) {
           <p className="p-3 text-white/30">No runs yet. Trigger a binding or use Test Action.</p>
         ) : (
           <div className="divide-y divide-white/[0.04]">
-            {sessions.slice(0, 30).map((session) => (
+            {sessions.slice(0, 30).reverse().map((session) => (
               <ConsoleSession key={session.sessionId} session={session} />
             ))}
           </div>

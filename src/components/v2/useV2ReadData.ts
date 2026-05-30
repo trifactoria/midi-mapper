@@ -86,6 +86,7 @@ type V2ReadData = {
   simulateCc: (controller: number, value: number, matched?: boolean, matchedBindingId?: string | null) => void;
   dryRunAction: (actionId: string) => Promise<BackendActionRunResult>;
   testAction: (actionId: string) => Promise<BackendActionRunResult>;
+  testTriggerGroup: (bindingId: string) => Promise<{ ok: boolean; session_id?: string; steps: BackendActionRunResult[] }>;
   testActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
   addDelayStep: (bindingId: string, durationMs?: number) => Promise<void>;
   addCommandStep: (bindingId: string, payload: { type?: string; label?: string; command?: string; workingDirectory?: string; executionMode?: "argv" | "detached"; timeoutMs?: number; title?: string; message?: string; urgency?: string }) => Promise<void>;
@@ -747,6 +748,14 @@ export function useV2ReadData(): V2ReadData {
     return result;
   }, [load]);
 
+  const testTriggerGroup = useCallback(async (bindingId: string) => {
+    const backendId = numericBackendId(bindingId);
+    if (!backendId) throw new Error("Real backend binding required before test");
+    const result = await v2Api.testTriggerGroup(backendId);
+    await load({ quiet: true });
+    return result;
+  }, [load]);
+
   const testActionPreview = useCallback(async (payload: BackendActionPreviewPayload) => {
     return v2Api.testActionPreview(payload);
   }, []);
@@ -977,6 +986,7 @@ export function useV2ReadData(): V2ReadData {
     simulateCc,
     dryRunAction,
     testAction,
+    testTriggerGroup,
     testActionPreview,
     addDelayStep,
     addCommandStep,

@@ -31,6 +31,7 @@ type Props = {
   onToggleBindingEnabled?: (bindingId: string) => void;
   onDuplicateBinding?: (bindingId: string) => Promise<V2BindingSummary | null>;
   onTestAction: (actionId: string) => Promise<BackendActionRunResult>;
+  onTestTriggerGroup: (bindingId: string) => Promise<{ ok: boolean; session_id?: string; steps: BackendActionRunResult[] }>;
   onTestActionPreview: (payload: BackendActionPreviewPayload) => Promise<BackendActionRunResult>;
   onDeleteBinding: (bindingId: string) => Promise<void>;
   onClearRuns?: () => Promise<void>;
@@ -81,6 +82,7 @@ export function MappingTab({
   onToggleBindingEnabled,
   onDuplicateBinding,
   onTestAction,
+  onTestTriggerGroup,
   onTestActionPreview,
   onDeleteBinding,
   onClearRuns,
@@ -102,11 +104,11 @@ export function MappingTab({
   function handleNoteClick(note: number) {
     if (!automation.mouseMode) return;
     const matching = bindings.filter(
-      (b) => b.kind === "note" && b.note === note && b.enabled && b.actionId,
+      (b) => b.kind === "note" && b.note === note && b.enabled && b.id,
     );
     onSimulateNote?.(note, undefined, matching.length > 0, matching[0]?.id ?? null);
-    for (const b of matching) {
-      void onTestAction(b.actionId!).catch(() => {});
+    if (matching[0]) {
+      void onTestTriggerGroup(matching[0].id).catch(() => {});
     }
     setTileCapture({ type: "note", value: note, key: ++tileCaptureKeyRef.current });
   }
@@ -118,13 +120,13 @@ export function MappingTab({
         b.kind === "cc" &&
         b.controller === controller &&
         b.enabled &&
-        b.actionId &&
+        b.id &&
         value >= (b.valueMin ?? 0) &&
         value <= (b.valueMax ?? 127),
     );
     onSimulateCc?.(controller, value, matching.length > 0, matching[0]?.id ?? null);
-    for (const b of matching) {
-      void onTestAction(b.actionId!).catch(() => {});
+    if (matching[0]) {
+      void onTestTriggerGroup(matching[0].id).catch(() => {});
     }
     setTileCapture({ type: "cc", value: controller, key: ++tileCaptureKeyRef.current });
   }
