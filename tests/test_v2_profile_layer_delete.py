@@ -59,8 +59,10 @@ def insert_run(db_path, *, action_id, binding_id, profile_id, layer_id):
 # ── Profile delete ─────────────────────────────────────────────────────────────
 
 def test_delete_last_profile_returns_400(client):
-    profile = client.post("/api/profiles", json={"name": "Only"}).json()
-    response = client.delete(f"/api/profiles/{profile['id']}")
+    # Fresh DB has exactly one profile (Default Profile). Deleting it must be blocked.
+    profiles = client.get("/api/profiles").json()
+    assert len(profiles) == 1
+    response = client.delete(f"/api/profiles/{profiles[0]['id']}")
     assert response.status_code == 400
 
 
@@ -78,8 +80,9 @@ def test_profile_delete_cascades_layers_bindings_triggers_actions(client, app_mo
     assert resp.json()["ok"] is True
 
     after = _counts(app_module.DB_PATH)
-    assert after["profiles"] == 1
-    assert after["layers"] == 0
+    # Default Profile + "Other" remain; Default Layer from Default Profile remains
+    assert after["profiles"] == 2
+    assert after["layers"] == 1
     assert after["bindings_v2"] == 0
     assert after["triggers"] == 0
     assert after["actions"] == 0
@@ -111,17 +114,21 @@ def test_profile_delete_nulls_runs_refs_and_preserves_run(client, app_module):
 
 
 def test_profile_delete_active_activates_next(client, app_module):
+    # Default Profile (lowest id) is present from startup bootstrap.
+    default_id = client.get("/api/profiles").json()[0]["id"]
+
     first = client.post("/api/profiles", json={"name": "First"}).json()
     second = client.post("/api/profiles", json={"name": "Second"}).json()
     client.post(f"/api/profiles/{second['id']}/activate")
 
     resp = client.delete(f"/api/profiles/{second['id']}").json()
-    assert resp["activated_profile_id"] == first["id"]
+    # Delete activates the remaining profile with the lowest id (Default Profile).
+    assert resp["activated_profile_id"] == default_id
 
     profiles = client.get("/api/profiles").json()
     active = [p for p in profiles if p["active"]]
     assert len(active) == 1
-    assert active[0]["id"] == first["id"]
+    assert active[0]["id"] == default_id
 
 
 def test_profile_delete_inactive_does_not_change_active(client, app_module):

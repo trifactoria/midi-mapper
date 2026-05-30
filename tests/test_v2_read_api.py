@@ -132,7 +132,8 @@ def test_v2_read_only_routes_return_seeded_data(client, app_module):
     })
 
     profiles = client.get("/api/profiles").json()
-    assert_dict_contains(profiles[0], {
+    workflow = next(p for p in profiles if p["name"] == "Workflow")
+    assert_dict_contains(workflow, {
         "id": 2,
         "name": "Workflow",
         "description": "Main workflow",

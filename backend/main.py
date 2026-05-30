@@ -37,7 +37,7 @@ from .config import (
     SCHEMA_PATH,
 )
 from .db import db_connect, db_exec, db_fetchall, db_fetchone
-from .migrations import apply_migrations
+from .migrations import apply_migrations, init_schema
 from .midi.listener import midi_pump as run_midi_pump
 from .midi.matcher import (
     binding_matches_message,
@@ -69,6 +69,7 @@ from .schemas import (
     SendContextIn,
 )
 from .services import (
+    ensure_default_profile_and_layer,
     ensure_ports_registered,
     gc_orphan_contexts,
     get_active_context_id,
@@ -138,7 +139,9 @@ for router in (
 # -----------------------------
 async def _startup() -> None:
     global MIDI_PUMP_TASK
+    init_schema(DB_PATH)  # idempotent: creates legacy tables if DB is brand-new
     await apply_migrations()
+    await ensure_default_profile_and_layer()  # first-run: create Default Profile + Default Layer
     # Clean up orphan contexts (contexts with no bindings)
     await gc_orphan_contexts()
     await ensure_ports_registered()

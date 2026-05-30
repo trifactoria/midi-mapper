@@ -83,6 +83,20 @@ echo ""
 echo ""
 echo "[midi-mapper] Frontend static build complete."
 
+# ── Root redirect for packaged app ────────────────────────────────────────────
+# Tauri opens tauri://localhost/ by default (no path). Inject a meta-refresh
+# at the root so the window lands on /v2/ where the real app lives.
+
+cat > "$ROOT_DIR/src-tauri/frontend-dist/index.html" <<'REDIRECT'
+<!DOCTYPE html>
+<html>
+<head><meta http-equiv="refresh" content="0; url=/v2/"></head>
+<body></body>
+</html>
+REDIRECT
+
+echo "[midi-mapper] Injected root redirect → /v2/"
+
 # ── Tauri package build ───────────────────────────────────────────────────────
 
 echo ""

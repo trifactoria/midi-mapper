@@ -9,11 +9,13 @@ import time
 
 
 def seed_trigger_group(db_path, *, delay_ms=50):
-    """Seed a three-step trigger group: echo → delay → open_url on note 48 ch 1."""
+    """Seed a three-step trigger group: echo → delay → open_url on note 48 ch 1.
+
+    Uses Default Profile (id=1) and Default Layer (id=1) created by startup bootstrap.
+    """
     with sqlite3.connect(db_path) as con:
         con.execute("PRAGMA foreign_keys=ON")
-        con.execute("INSERT INTO profiles(id, name, active) VALUES (1, 'Profile', 1)")
-        con.execute("INSERT INTO layers(id, profile_id, name, active) VALUES (2, 1, 'Layer', 1)")
+        # Default Profile (id=1) and Default Layer (id=1) already exist from bootstrap.
         con.execute(
             "INSERT INTO triggers(id, event_type, channel, note) VALUES (3, 'note_on', 1, 48)"
         )
@@ -23,10 +25,10 @@ def seed_trigger_group(db_path, *, delay_ms=50):
         con.execute(f"INSERT INTO actions(id, type, label, duration_ms, execution_mode) VALUES (11, 'delay', 'Wait', {delay_ms}, 'argv')")
         con.execute("INSERT INTO actions(id, type, label, command, execution_mode) VALUES (12, 'open_url', 'Firefox', 'https://example.com', 'argv')")
 
-        # Three bindings on the same trigger — one action each
-        con.execute("INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (20, 1, 2, 3, 10, 1, 0)")
-        con.execute("INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (21, 1, 2, 3, 11, 1, 0)")
-        con.execute("INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (22, 1, 2, 3, 12, 1, 0)")
+        # Three bindings on the same trigger — one action each, in Default Profile/Layer
+        con.execute("INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (20, 1, 1, 3, 10, 1, 0)")
+        con.execute("INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (21, 1, 1, 3, 11, 1, 0)")
+        con.execute("INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (22, 1, 1, 3, 12, 1, 0)")
 
         # binding_actions: execution_order assigned group-wide (0, 1, 2)
         con.execute("INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled) VALUES (20, 10, 0, 1)")
@@ -116,8 +118,5 @@ def test_trigger_group_all_steps_share_session_id(client, app_module, monkeypatc
 
 def test_trigger_group_returns_404_for_unknown_binding(client, app_module):
     """Requesting a non-existent binding returns 404."""
-    with sqlite3.connect(app_module.DB_PATH) as con:
-        con.execute("INSERT INTO profiles(id, name, active) VALUES (1, 'P', 1)")
-        con.commit()
     resp = client.post("/api/bindings/9999/test-trigger-group")
     assert resp.status_code == 404

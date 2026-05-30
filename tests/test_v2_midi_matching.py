@@ -202,3 +202,33 @@ def test_v2_automation_disarmed_does_not_block_unarmed_binding(app_module):
     msg = app_module.mido.Message("note_on", channel=1, note=60, velocity=100)
 
     assert match_v2(app_module, "Test MIDI In", msg)["id"] == 5
+
+
+def test_v2_notification_binding_action_steps_include_title_message_urgency(app_module):
+    with sqlite3.connect(app_module.DB_PATH) as con:
+        con.execute("PRAGMA foreign_keys=ON")
+        con.execute("INSERT INTO profiles(id, name, active) VALUES (1, 'Profile', 1)")
+        con.execute("INSERT INTO layers(id, profile_id, name, active) VALUES (2, 1, 'Layer', 1)")
+        con.execute("INSERT INTO triggers(id, event_type, channel, note) VALUES (3, 'note_on', 1, 60)")
+        con.execute(
+            """INSERT INTO actions(id, type, label, command, title, message, urgency, execution_mode)
+               VALUES (4, 'notification', 'Notify', '', 'Recording Started', 'Scene is live', 'normal', 'argv')"""
+        )
+        con.execute(
+            "INSERT INTO bindings_v2(id, profile_id, layer_id, trigger_id, action_id, enabled, require_armed) VALUES (5, 1, 2, 3, 4, 1, 0)"
+        )
+        con.execute(
+            "INSERT INTO binding_actions(binding_id, action_id, execution_order, enabled) VALUES (5, 4, 0, 1)"
+        )
+        con.commit()
+
+    msg = app_module.mido.Message("note_on", channel=1, note=60, velocity=100)
+    match = match_v2(app_module, "Test MIDI In", msg)
+
+    assert match is not None
+    assert match["action"]["title"] == "Recording Started"
+    assert match["action"]["message"] == "Scene is live"
+    assert match["action"]["urgency"] == "normal"
+    assert match["actions"][0]["title"] == "Recording Started"
+    assert match["actions"][0]["message"] == "Scene is live"
+    assert match["actions"][0]["urgency"] == "normal"

@@ -71,14 +71,16 @@ def test_reenabled_binding_is_matched_at_runtime(app_module, client):
     """Re-enabling a binding makes it fire again."""
     import backend.midi.matcher as matcher
 
-    _, _, binding = create_profile_layer_binding(client, note=61)
+    profile, layer, binding = create_profile_layer_binding(client, note=61)
     client.patch(f"/api/bindings/{binding['id']}", json={"enabled": 0})
     client.patch(f"/api/bindings/{binding['id']}", json={"enabled": 1})
 
-    # Mark the profile/layer active so the matcher can find them.
+    # Activate exactly the profile/layer that holds the binding.
     with sqlite3.connect(app_module.DB_PATH) as con:
-        con.execute("UPDATE profiles SET active=1")
-        con.execute("UPDATE layers SET active=1")
+        con.execute("UPDATE profiles SET active=0")
+        con.execute("UPDATE profiles SET active=1 WHERE id=?", (profile["id"],))
+        con.execute("UPDATE layers SET active=0")
+        con.execute("UPDATE layers SET active=1 WHERE id=?", (layer["id"],))
         con.commit()
 
     msg = SimpleNamespace(type="note_on", channel=0, note=61, velocity=100)

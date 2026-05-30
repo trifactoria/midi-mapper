@@ -79,17 +79,15 @@ export function AutomationTopbar({
     <header className="flex items-center gap-3 border-b border-white/[0.08] bg-[rgba(7,10,18,0.72)] px-3 py-1.5 shadow-[0_1px_0_rgba(255,255,255,0.025),0_8px_22px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md backdrop-saturate-150 sm:px-4">
       {/* Brand */}
       <div className="flex shrink-0 items-center gap-2">
-        <div
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logo.png"
+          alt="MIDI Mapper"
+          width={32}
+          height={32}
+          className="h-8 w-8 rounded-md"
           aria-hidden
-          className="grid h-8 w-8 place-items-center rounded-md bg-gradient-to-br from-cyan-400/25 via-cyan-300/10 to-purple-500/20 shadow-[0_0_14px_rgba(0,170,210,0.22)]"
-        >
-          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-cyan-100" aria-hidden>
-            <path
-              fill="currentColor"
-              d="M2 3h2v10H2zm10 0h2v10h-2zM5.5 3h2v10h-2zm3 0h2v10h-2z"
-            />
-          </svg>
-        </div>
+        />
         <div className="text-[14px] font-semibold tracking-tight text-white">MIDI Mapper</div>
       </div>
 

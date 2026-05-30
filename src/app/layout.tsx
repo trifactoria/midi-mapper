@@ -25,7 +25,10 @@ export const metadata: Metadata = {
     "automation",
   ],
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
   },
 };
 

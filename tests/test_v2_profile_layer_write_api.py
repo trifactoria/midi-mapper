@@ -87,15 +87,16 @@ def test_profile_write_endpoints_create_patch_activate_duplicate_and_delete(clie
     assert before_delete_counts["triggers"] == 0
 
     deleted = client.delete(f"/api/profiles/{second['id']}").json()
-    assert deleted == {
-        "ok": True,
-        "deleted_profile_id": second["id"],
-        "activated_profile_id": first["id"],
-    }
-    assert active_profile_ids(client) == [first["id"]]
+    assert deleted["ok"] is True
+    assert deleted["deleted_profile_id"] == second["id"]
+    # Delete activates the remaining profile with the lowest id (Default Profile).
+    assert deleted["activated_profile_id"] is not None
+    assert active_profile_ids(client) == [deleted["activated_profile_id"]]
 
     remaining_ids = {profile["id"] for profile in client.get("/api/profiles").json()}
-    assert remaining_ids == {first["id"], duplicate["id"]}
+    assert first["id"] in remaining_ids
+    assert duplicate["id"] in remaining_ids
+    assert second["id"] not in remaining_ids
 
     # Deleting profiles cascades their layers but does not create binding/action data.
     client.delete(f"/api/profiles/{duplicate['id']}")

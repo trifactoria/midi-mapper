@@ -1,0 +1,85 @@
+1:"$Sreact.fragment"
+2:I[1354,["487","static/chunks/487-f28927d1cd792f43.js","177","static/chunks/app/layout-a85f39654d0c8601.js"],"Header"]
+3:I[4245,[],""]
+4:I[9521,[],""]
+9:I[8855,[],""]
+:HL["/_next/static/css/0905051bd7189009.css","style"]
+5:T9eb,
+        body > .min-h-screen > header,
+        body > .min-h-screen > footer { display: none !important; }
+        body > .min-h-screen > main {
+          max-width: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        /* /v2 form density — scoped to the V2 main only */
+        body > .min-h-screen > main button,
+        body > .min-h-screen > main .btn {
+          padding: 6px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+        }
+        body > .min-h-screen > main input,
+        body > .min-h-screen > main select,
+        body > .min-h-screen > main textarea {
+          box-sizing: border-box;
+          min-height: 32px;
+          padding: 6px 9px;
+          border-radius: 6px;
+          font-size: 12px;
+          line-height: 18px;
+          border-width: 1px;
+          border-color: #3f4751;
+          background-color: #171b20;
+          color: #ededed;
+        }
+        body > .min-h-screen > main input,
+        body > .min-h-screen > main select {
+          height: 32px;
+        }
+        body > .min-h-screen > main select {
+          appearance: none;
+          -webkit-appearance: none;
+          color-scheme: dark;
+          padding-right: 28px;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23aeb8c2' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+          background-position: right 9px center;
+          background-repeat: no-repeat;
+          background-size: 12px;
+        }
+        body > .min-h-screen > main select option,
+        body > .min-h-screen > main select optgroup {
+          background-color: #171b20;
+          color: #ededed;
+        }
+        body > .min-h-screen > main input:hover,
+        body > .min-h-screen > main select:hover,
+        body > .min-h-screen > main textarea:hover {
+          border-color: #59636e;
+          background-color: #1f252c;
+        }
+        body > .min-h-screen > main input:focus,
+        body > .min-h-screen > main select:focus,
+        body > .min-h-screen > main textarea:focus {
+          border-color: rgba(0, 212, 255, 0.55);
+          background-color: #20262d;
+          box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
+        }
+        body > .min-h-screen > main button:hover:not(:disabled),
+        body > .min-h-screen > main .btn:hover:not(:disabled) {
+          transform: none;
+        }
+      0:{"P":null,"b":"Nc9gREiQWcHQCfNUdSjDN","c":["","v2",""],"q":"","i":false,"f":[[["",{"children":["v2",{"children":["__PAGE__",{}]}]},"$undefined","$undefined",true],[["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/css/0905051bd7189009.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}]],["$","html",null,{"lang":"en","className":"h-full bg-black text-white","children":["$","body",null,{"className":"min-h-full antialiased","children":["$","div",null,{"className":"min-h-screen","children":[["$","$L2",null,{}],["$","main",null,{"className":"mx-auto w-full max-w-[1400px] px-4 py-4","children":["$","$L3",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L4",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":404}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]}]],[]],"forbidden":"$undefined","unauthorized":"$undefined"}]}],["$","footer",null,{"className":"mx-auto w-full max-w-[1400px] px-4 pb-6 pt-2 text-center text-xs text-white/35","children":["$","div",null,{"children":["© ",2026," ",["$","a",null,{"href":"https://github.com/trifactoria","target":"_blank","rel":"noopener noreferrer","style":{"color":"inherit","textDecoration":"underline"},"children":"TriFactoria"}]," · ",["$","a",null,{"href":"https://github.com/trifactoria/midi-mapper","target":"_blank","rel":"noopener noreferrer","style":{"color":"inherit","textDecoration":"underline"},"children":"GitHub"}]," · ",["$","a",null,{"href":"https://github.com/sponsors/trifactoria","target":"_blank","rel":"noopener noreferrer","style":{"color":"inherit","textDecoration":"underline"},"children":"Sponsor"}]]}]}]]}]}]}]]}],{"children":[["$","$1","c",{"children":[null,[["$","style",null,{"children":"$5"}],"$L6"]]}],{"children":["$L7",{},null,false,false]},null,false,false]},null,false,false],"$L8",false]],"m":"$undefined","G":["$9",[]],"S":true}
+a:I[4173,["31","static/chunks/app/v2/page-290bd783d4bd847f.js"],"V2Shell"]
+b:I[7272,[],"OutletBoundary"]
+c:"$Sreact.suspense"
+e:I[7272,[],"ViewportBoundary"]
+10:I[7272,[],"MetadataBoundary"]
+6:["$","$L3",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L4",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","forbidden":"$undefined","unauthorized":"$undefined"}]
+7:["$","$1","c",{"children":[["$","$La",null,{}],null,["$","$Lb",null,{"children":["$","$c",null,{"name":"Next.MetadataOutlet","children":"$@d"}]}]]}]
+8:["$","$1","h",{"children":[null,["$","$Le",null,{"children":"$Lf"}],["$","div",null,{"hidden":true,"children":["$","$L10",null,{"children":["$","$c",null,{"name":"Next.Metadata","children":"$L11"}]}]}],null]}]
+f:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1, viewport-fit=cover"}],["$","meta","2",{"name":"theme-color","content":"#0b0b0b"}]]
+12:I[1726,[],"IconMark"]
+d:null
+11:[["$","title","0",{"children":"V2 Shell · MIDI Mapper"}],["$","meta","1",{"name":"description","content":"Map MIDI input to local commands. Context-aware bindings (port/channel/bank/program), fast setup UI, and headless execution."}],["$","meta","2",{"name":"application-name","content":"MIDI Mapper"}],["$","meta","3",{"name":"author","content":"MIDI Mapper"}],["$","meta","4",{"name":"generator","content":"Next.js"}],["$","meta","5",{"name":"keywords","content":"midi,macro pad,stream deck,linux,awesomewm,keyboard shortcuts,automation"}],["$","meta","6",{"name":"referrer","content":"strict-origin-when-cross-origin"}],["$","meta","7",{"name":"category","content":"productivity"}],["$","link","8",{"rel":"icon","href":"/favicon.ico?6f14fa8e89edc947","type":"image/x-icon","sizes":"16x16"}],["$","link","9",{"rel":"icon","href":"/favicon.ico"}],["$","link","10",{"rel":"icon","href":"/icon-512.png","sizes":"512x512","type":"image/png"}],["$","$L12","11",{}]]

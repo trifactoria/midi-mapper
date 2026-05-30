@@ -173,7 +173,10 @@ async def _binding_action_steps(binding_id: int) -> list[Dict[str, Any]]:
           a.execution_mode,
           a.timeout_ms,
           a.notify_text,
-          a.notify_emoji
+          a.notify_emoji,
+          a.title,
+          a.message,
+          a.urgency
         FROM binding_actions ba
         JOIN actions a ON a.id = ba.action_id
         WHERE ba.binding_id = ?
@@ -197,6 +200,9 @@ def _v2_response(row: Dict[str, Any], actions: list[Dict[str, Any]]) -> Dict[str
         "timeout_ms": row["timeout_ms"],
         "notify_text": row["notify_text"],
         "notify_emoji": row["notify_emoji"],
+        "title": row["title"],
+        "message": row["message"],
+        "urgency": row["urgency"],
     }
     return {
         "id": row["binding_id"],
@@ -307,7 +313,10 @@ async def binding_matches_message_v2(
           a.execution_mode,
           a.timeout_ms,
           a.notify_text,
-          a.notify_emoji
+          a.notify_emoji,
+          a.title,
+          a.message,
+          a.urgency
         FROM bindings_v2 b
         JOIN triggers t ON t.id = b.trigger_id
         JOIN actions a ON a.id = b.action_id

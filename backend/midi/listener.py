@@ -286,6 +286,8 @@ async def _execute_v2_match(
             result = await safe_execute_command(
                 command,
                 execution_mode=step.get("execution_mode", "argv"),
+                timeout_ms=step.get("timeout_ms"),
+                working_directory=step.get("working_directory"),
             )
             result["command"] = command
             action_summary = command

@@ -57,6 +57,24 @@ async def gc_orphan_contexts() -> int:
         return cursor.rowcount if cursor.rowcount else 0
 
 
+async def ensure_default_profile_and_layer() -> None:
+    """Create Default Profile + Default Layer on first run (no-op if profiles already exist)."""
+    async with db_connect() as db:
+        row = await (await db.execute("SELECT COUNT(*) FROM profiles")).fetchone()
+        if row and row[0] > 0:
+            return
+        cur = await db.execute(
+            "INSERT INTO profiles(name, description, active) VALUES (?, ?, 1)",
+            ("Default Profile", ""),
+        )
+        profile_id = cur.lastrowid
+        await db.execute(
+            "INSERT INTO layers(profile_id, name, sort_order, active) VALUES (?, ?, 0, 1)",
+            (profile_id, "Default Layer"),
+        )
+        await db.commit()
+
+
 async def load_and_apply_defaults() -> None:
     """Load defaults from settings and apply to ACTIVE_SELECTION and active_context_id."""
     # Load defaults

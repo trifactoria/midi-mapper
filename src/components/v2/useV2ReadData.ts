@@ -1,16 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  appStats as mockAppStats,
-  automationState as mockAutomationState,
-  bindings as mockBindings,
-  keyboardNotes as mockKeyboardNotes,
-  layers as mockLayers,
-  monitorEvents as mockMonitorEvents,
-  profiles as mockProfiles,
-  runs as mockRuns,
-} from "./mockData";
 import type {
   AppStats,
   AutomationState,
@@ -108,6 +98,8 @@ type ReadResult<T> = {
 type DataSource = "backend" | "mock";
 
 const DEFAULT_CC_BARS: CcBar[] = Array.from({ length: 16 }, (_, index) => ({ index, value: 0 }));
+const DEFAULT_AUTOMATION: AutomationState = { armed: false, matchingMode: "v2", keygrab: false, mouseMode: false };
+const EMPTY_STATS: AppStats = { midiInput: "", lastEvent: "", profiles: 0, layers: 0, bindings: 0, actions: 0 };
 type LiveNoteState = Record<number, { active: boolean; pressed: boolean; velocity?: number; matched?: boolean }>;
 
 async function readOrFallback<T>(read: () => Promise<T>, isEmpty: (value: T) => boolean): Promise<ReadResult<T>> {
@@ -229,18 +221,18 @@ function displayColorHex(color: string | undefined): string {
 }
 
 export function useV2ReadData(): V2ReadData {
-  const [profiles, setProfiles] = useState(mockProfiles);
-  const [layers, setLayers] = useState(mockLayers);
-  const [bindings, setBindings] = useState(mockBindings);
-  const [runs, setRuns] = useState(mockRuns);
+  const [profiles, setProfiles] = useState<V2ProfileSummary[]>([]);
+  const [layers, setLayers] = useState<V2LayerSummary[]>([]);
+  const [bindings, setBindings] = useState<V2BindingSummary[]>([]);
+  const [runs, setRuns] = useState<V2RunSummary[]>([]);
   const [macros, setMacros] = useState<V2Macro[]>([]);
-  const [automation, setAutomation] = useState(mockAutomationState);
+  const [automation, setAutomation] = useState<AutomationState>(DEFAULT_AUTOMATION);
   const [devices, setDevices] = useState<BackendDevice[]>([]);
   const [inputPorts, setInputPorts] = useState<BackendPort[]>([]);
   const [selectedInputPort, setSelectedInputPortState] = useState<string | null>(null);
   const [midiStatus, setMidiStatus] = useState<BackendMidiStatus | null>(null);
-  const [profileSource, setProfileSource] = useState<DataSource>("mock");
-  const [layerSource, setLayerSource] = useState<DataSource>("mock");
+  const [profileSource, setProfileSource] = useState<DataSource>("backend");
+  const [layerSource, setLayerSource] = useState<DataSource>("backend");
   const [dataSourceLabel, setDataSourceLabel] = useState<V2ReadData["dataSourceLabel"]>("Backend unavailable");
   const [monitorEvents, setMonitorEvents] = useState<MidiMonitorEvent[]>([]);
   const [liveNotes, setLiveNotes] = useState<LiveNoteState>({});
@@ -274,7 +266,7 @@ export function useV2ReadData(): V2ReadData {
     const nextProfileSource: DataSource = backendReachable ? "backend" : "mock";
     const nextProfiles = profileResult.value !== null
       ? ensureOneActive(mapProfiles(profileResult.value))
-      : mockProfiles;
+      : [];
     const activeProfile = nextProfiles.find((profile) => profile.active) ?? nextProfiles[0];
     const activeProfileBackendId =
       nextProfileSource === "backend" && activeProfile ? numericBackendId(activeProfile.id) : null;
@@ -284,7 +276,7 @@ export function useV2ReadData(): V2ReadData {
     const nextLayerSource: DataSource = backendReachable ? "backend" : "mock";
     const nextLayers = backendReachable
       ? ensureOneActive(mapLayers(layerResult.value ?? []))
-      : mockLayers;
+      : [];
     const activeLayer = nextLayers.find((layer) => layer.active) ?? nextLayers[0];
     const activeLayerBackendId =
       nextLayerSource === "backend" && activeLayer ? numericBackendId(activeLayer.id) : null;
@@ -293,7 +285,7 @@ export function useV2ReadData(): V2ReadData {
       : { value: null, fallback: true };
     const nextBindings = backendReachable
       ? mapBindings(bindingResult.value ?? [], nextLayers)
-      : mockBindings;
+      : [];
 
     if (options?.signal?.aborted) return;
 
@@ -302,12 +294,9 @@ export function useV2ReadData(): V2ReadData {
     setBindings(nextBindings);
     setProfileSource(nextProfileSource);
     setLayerSource(nextLayerSource);
-    setRuns(backendReachable ? mapRuns(runResult.value ?? []) : mockRuns);
+    setRuns(backendReachable ? mapRuns(runResult.value ?? []) : []);
     setMacros(backendReachable ? mapMacros(macroResult.value ?? []) : []);
     setAutomation((current) => mapAutomation(automationResult.value, null, current));
-    if (!backendReachable) {
-      setMonitorEvents((current) => (current.length > 0 ? current : mockMonitorEvents));
-    }
     setDevices(deviceResult.value ?? []);
     setInputPorts(
       portResult.value ??
@@ -321,7 +310,7 @@ export function useV2ReadData(): V2ReadData {
     setSelectedInputPortState(inputResult.value?.selected_input_port || null);
     setMidiStatus(healthResult.value?.midi ?? null);
     setDataSourceLabel(backendReachable ? "Real backend data" : "Backend unavailable");
-    setError(backendReachable ? null : "Using demo data");
+    setError(backendReachable ? null : "Backend unavailable");
     setLoading(false);
   }, []);
 
@@ -331,7 +320,7 @@ export function useV2ReadData(): V2ReadData {
     load({ signal: controller.signal }).catch(() => {
       if (!controller.signal.aborted) {
         setDataSourceLabel("Backend unavailable");
-        setError("Using demo data");
+        setError("Backend unavailable");
         setLoading(false);
       }
     });
@@ -902,16 +891,13 @@ export function useV2ReadData(): V2ReadData {
       }
     }
     const boundNotes = new Set(noteColors.keys());
-    const mockNoteMap = new Map(mockKeyboardNotes.map((n) => [n.note, n]));
     return Array.from({ length: 128 }, (_, noteNum) => {
-      const mock = mockNoteMap.get(noteNum);
       const live = liveNotes[noteNum];
       const name = NOTE_NAMES[noteNum % 12] ?? "?";
       const octave = Math.floor(noteNum / 12) - 1;
-      const bound = (profileSource === "mock" && Boolean(mock?.bound)) || boundNotes.has(noteNum);
+      const bound = boundNotes.has(noteNum);
       const bindingDotColor = noteColors.get(noteNum) ?? "cyan";
-      const baseDots = profileSource === "mock" ? mock?.dots : undefined;
-      const dots: KeyboardNote["dots"] = bound && !baseDots?.length ? [bindingDotColor] : baseDots;
+      const dots: KeyboardNote["dots"] = bound ? [bindingDotColor] : undefined;
       const nextDots: KeyboardNote["dots"] =
         live?.matched && dots && !dots.includes("emerald") ? [...dots, "emerald"] : live?.matched && !dots ? ["emerald"] : dots;
       return {
@@ -919,27 +905,23 @@ export function useV2ReadData(): V2ReadData {
         label: `${name}${octave}`,
         bound,
         dots: nextDots,
-        active: Boolean(live?.active) || Boolean(profileSource === "mock" && mock?.active),
-        pressed: Boolean(live?.pressed) || Boolean(profileSource === "mock" && mock?.pressed),
-        velocity: live?.velocity ?? (profileSource === "mock" ? mock?.velocity : undefined),
+        active: Boolean(live?.active),
+        pressed: Boolean(live?.pressed),
+        velocity: live?.velocity,
         icon: noteIcons.get(noteNum),
         iconColor: noteIconColors.get(noteNum),
       };
     });
-  }, [bindings, liveNotes, profileSource]);
+  }, [bindings, liveNotes]);
 
   const appStats = useMemo(() => {
-    const baseStats = mapStats(profiles, layers, bindings, devices, mockAppStats);
+    const baseStats = mapStats(profiles, layers, bindings, devices, EMPTY_STATS);
     return {
       ...baseStats,
-      midiInput:
-        selectedInputPort ??
-        liveSourcePort ??
-        midiStatus?.selected_input_port ??
-        (profileSource === "backend" ? "Select MIDI Input" : baseStats.midiInput),
-      lastEvent: liveLastEvent ?? (profileSource === "backend" ? "Waiting for MIDI input..." : baseStats.lastEvent),
+      midiInput: selectedInputPort ?? liveSourcePort ?? midiStatus?.selected_input_port ?? "Select MIDI Input",
+      lastEvent: liveLastEvent ?? "Waiting for MIDI input...",
     };
-  }, [bindings, devices, layers, liveLastEvent, liveSourcePort, midiStatus?.selected_input_port, profileSource, profiles, selectedInputPort]);
+  }, [bindings, devices, layers, liveLastEvent, liveSourcePort, midiStatus?.selected_input_port, profiles, selectedInputPort]);
 
   return {
     profiles,
