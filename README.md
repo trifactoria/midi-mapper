@@ -13,8 +13,8 @@ Tauri desktop shell is available for a self-contained window experience.
 accounts, no network calls. Built and tested on Ubuntu/Debian. Cross-platform
 support is not planned.
 
-**Active personal tool — not a polished product.** Core workflows are stable.
-Rough edges exist.
+**Personal tool, actively used and maintained.** Core workflows are stable.
+Some rough edges remain.
 
 ## Current State
 
@@ -244,7 +244,8 @@ Review every binding before enabling it.
 │   └── demo-workflows.json # Flat single-layer demo (notification, URL, app)
 ├── tests/                  # pytest test suite
 ├── scripts/                # Dev helpers (dev-stack.sh, check.sh, preview-desktop.sh, …)
-├── docs/                   # Dev notes, architecture docs, demo checklist
+├── docs/                   # Dev notes, demo checklist, packaging guide
+│   └── archive/            # Archived planning docs
 ├── src/                    # Next.js frontend
 │   └── components/
 │       ├── layout/         # V2Shell — top-level app shell
