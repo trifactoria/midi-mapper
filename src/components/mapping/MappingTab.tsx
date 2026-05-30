@@ -173,23 +173,6 @@ export function MappingTab({
             <SectionHeader
               title="Active Bindings"
               count={bindings.length}
-              trailing={
-                <select
-                  aria-label="Filter bindings"
-                  className="!h-6 rounded !border-white/10 !bg-white/[0.03] !px-1.5 !py-0 !text-[10.5px] text-white/70"
-                  defaultValue="all"
-                >
-                  <option value="all">All Types</option>
-                  <option value="note">Note</option>
-                  <option value="cc">CC</option>
-                </select>
-              }
-            />
-            <input
-              type="search"
-              placeholder="Search bindings..."
-              className="mb-2 block w-full !text-[11.5px]"
-              aria-label="Search bindings"
             />
             <div className="max-h-96 overflow-y-auto">
               <ActiveBindingsList

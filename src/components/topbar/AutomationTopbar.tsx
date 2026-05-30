@@ -1,5 +1,6 @@
 "use client";
 
+import { ToggleTrack } from "../ToggleSwitch";
 import type { AutomationState } from "../v2/types";
 import type { BackendPort } from "../v2/api";
 
@@ -12,57 +13,6 @@ type Props = {
   onSettingsClick?: () => void;
 };
 
-function Switch({ on, size = "md" }: { on: boolean; size?: "sm" | "md" }) {
-  const wrap = size === "sm" ? "h-4 w-7" : "h-[18px] w-8";
-  const knob = size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
-  const knobLeft = size === "sm" ? (on ? "left-[14px]" : "left-0.5") : on ? "left-[16px]" : "left-0.5";
-  return (
-    <span
-      className={[
-        "relative inline-flex shrink-0 rounded-full border transition",
-        wrap,
-        on
-          ? "border-emerald-300/40 bg-emerald-400/80 shadow-[0_0_12px_rgba(52,211,153,0.45)]"
-          : "border-white/10 bg-white/[0.08]",
-      ].join(" ")}
-      aria-hidden
-    >
-      <span
-        className={[
-          "absolute top-0.5 rounded-full bg-white transition",
-          knob,
-          knobLeft,
-        ].join(" ")}
-      />
-    </span>
-  );
-}
-
-function ToggleLine({ label, on, onClick }: { label: string; on: boolean; onClick?: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={[
-        "flex !h-8 items-center gap-2 rounded-md border !px-2.5 !text-[10.5px] uppercase tracking-[0.10em]",
-        on
-          ? "border-white/12 bg-white/[0.04] text-white/85"
-          : "border-white/10 bg-white/[0.02] text-white/55",
-        onClick ? "cursor-pointer hover:opacity-80" : "cursor-default",
-      ].join(" ")}
-      aria-pressed={on}
-    >
-      <span
-        className={[
-          "h-1.5 w-1.5 rounded-full",
-          on ? "bg-emerald-300 shadow-[0_0_8px_rgba(52,211,153,0.7)]" : "bg-white/25",
-        ].join(" ")}
-      />
-      <span>{label}</span>
-      <Switch on={on} size="sm" />
-    </button>
-  );
-}
 
 export function AutomationTopbar({
   state,
@@ -115,7 +65,7 @@ export function AutomationTopbar({
           >
             {state.armed ? "ON" : "OFF"}
           </span>
-          <Switch on={state.armed} size="sm" />
+          <ToggleTrack on={state.armed} />
           <span aria-hidden className="text-white/45">
             <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
               <rect x="3.5" y="7" width="9" height="6.5" rx="1.2" />

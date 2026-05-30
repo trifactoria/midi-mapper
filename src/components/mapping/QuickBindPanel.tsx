@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconPicker } from "../IconPicker";
+import { ToggleTrack } from "../ToggleSwitch";
 import type { BackendActionPreviewPayload, BackendActionRunResult, BackendBindingCreatePayload } from "../v2/api";
 import type { V2BindingSummary, V2MidiEventPayload } from "../v2/types";
 
@@ -22,31 +23,15 @@ function FieldLabel({ children, optional }: { children: React.ReactNode; optiona
 
 function Toggle({ on, label, onClick }: { on: boolean; label: string; onClick?: () => void }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={onClick}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") onClick?.();
-      }}
-      className="flex items-center justify-between gap-3"
+      className="flex w-full items-center justify-between gap-3"
+      style={{ background: "transparent", border: "none", padding: 0, minHeight: 0 }}
     >
       <span className="text-[11.5px] text-white/80">{label}</span>
-      <span
-        className={[
-          "relative inline-flex h-4 w-7 shrink-0 rounded-full transition",
-          on ? "bg-emerald-400/80 shadow-[0_0_10px_rgba(52,211,153,0.45)]" : "bg-white/15",
-        ].join(" ")}
-        aria-hidden
-      >
-        <span
-          className={[
-            "absolute top-0.5 h-3 w-3 rounded-full bg-white transition",
-            on ? "left-[14px]" : "left-0.5",
-          ].join(" ")}
-        />
-      </span>
-    </div>
+      <ToggleTrack on={on} />
+    </button>
   );
 }
 
@@ -69,7 +54,6 @@ const PRESET_GROUPS: { group: string; items: ActionPreset[] }[] = [
     group: "",
     items: [
       { id: "custom", label: "Custom Command", command: "echo", args: "hello" },
-      { id: "echo_test", label: "Shell Echo / Test", command: "echo", args: "hello" },
     ],
   },
   {
@@ -587,11 +571,11 @@ export function QuickBindPanel({
         <div className="mt-2 grid grid-cols-[1fr_auto] items-end gap-1.5">
           <div className="grid grid-cols-2 gap-1.5">
             <label className="block">
-              <FieldLabel>Velocity Min</FieldLabel>
+              <FieldLabel>{eventType === "cc" ? "Value Min" : "Velocity Min"}</FieldLabel>
               <input className="w-full font-mono !text-[11.5px]" value={eventType === "cc" ? valueMin : velocityMin} onChange={(event) => eventType === "cc" ? setValueMin(event.target.value) : setVelocityMin(event.target.value)} />
             </label>
             <label className="block">
-              <FieldLabel>Velocity Max</FieldLabel>
+              <FieldLabel>{eventType === "cc" ? "Value Max" : "Velocity Max"}</FieldLabel>
               <input className="w-full font-mono !text-[11.5px]" value={eventType === "cc" ? valueMax : velocityMax} onChange={(event) => eventType === "cc" ? setValueMax(event.target.value) : setVelocityMax(event.target.value)} />
             </label>
           </div>

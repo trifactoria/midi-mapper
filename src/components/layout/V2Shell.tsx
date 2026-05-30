@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { ActionsPanel } from "../bindings/ActionsPanel";
-import { BindingsPanel } from "../bindings/BindingsPanel";
 import { ConsolePanel } from "../console/ConsolePanel";
 import { RunHistoryPanel } from "../history/RunHistoryPanel";
 import { MappingTab } from "../mapping/MappingTab";
@@ -11,7 +10,7 @@ import { SettingsPanel } from "../settings/SettingsPanel";
 import { AutomationTopbar } from "../topbar/AutomationTopbar";
 import { useV2ReadData } from "../v2/useV2ReadData";
 
-type TabId = "mapping" | "bindings" | "actions" | "history" | "settings";
+type TabId = "mapping" | "actions" | "history" | "settings";
 
 const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
   {
@@ -20,15 +19,6 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     icon: (
       <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
         <path d="M2 12.5l4-4 2 2 6-6M10 4.5h3.5V8" />
-      </svg>
-    ),
-  },
-  {
-    id: "bindings",
-    label: "Bindings",
-    icon: (
-      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
-        <path d="M5 8.5l-1.5 1.5a2 2 0 1 0 2.8 2.8L8 11M11 7.5l1.5-1.5a2 2 0 1 0-2.8-2.8L8 5M6 10l4-4" />
       </svg>
     ),
   },
@@ -48,16 +38,6 @@ const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
       <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
         <circle cx="8" cy="8" r="5.5" />
         <path d="M8 5v3l2 2" />
-      </svg>
-    ),
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    icon: (
-      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
-        <circle cx="8" cy="8" r="2" />
-        <path d="M8 1.5v2M8 12.5v2M14.5 8h-2M3.5 8h-2M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4M12.6 12.6l-1.4-1.4M4.8 4.8 3.4 3.4" />
       </svg>
     ),
   },
@@ -145,7 +125,7 @@ export function V2Shell() {
           selectedInputPort={selectedInputPort}
           onAutomationArmedChange={(armed) => void setAutomationArmed(armed)}
           onSelectedInputPortChange={(portName) => void setSelectedInputPort(portName)}
-          onSettingsClick={() => setActiveTab("settings")}
+          onSettingsClick={() => setActiveTab(activeTab === "settings" ? "mapping" : "settings")}
         />
 
         {/* Mobile profile/layer compact bar */}
@@ -236,7 +216,6 @@ export function V2Shell() {
                   lastMidiEvent={lastMidiEvent}
                 />
               )}
-              {activeTab === "bindings" && <BindingsPanel bindings={bindings} />}
               {activeTab === "actions" && (
                 <ActionsPanel
                   bindings={bindings}

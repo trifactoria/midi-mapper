@@ -285,7 +285,7 @@ function CloneDrawer({
             className="!h-7 !rounded !px-2 !py-0 !text-[10px]"
             onClick={() => void handleClone()}
           >
-            Clone (disabled)
+            Clone
           </button>
         </div>
       </div>

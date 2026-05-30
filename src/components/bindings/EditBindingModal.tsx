@@ -104,7 +104,11 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 }
 
 function inputCls(extra = "") {
-  return `w-full rounded border border-white/10 bg-white/[0.05] px-2 py-1 text-[11.5px] text-white/90 placeholder-white/25 focus:border-white/20 focus:outline-none ${extra}`;
+  return `w-full rounded border border-white/10 bg-white/[0.05] !px-2 !py-1 !min-h-0 text-[11.5px] text-white/90 placeholder-white/25 focus:border-white/20 focus:outline-none ${extra}`;
+}
+
+function selectCls(extra = "") {
+  return `w-full rounded border border-white/10 bg-white/[0.05] !px-2 !py-0 !h-8 !min-h-0 text-[11.5px] text-white/90 focus:border-white/20 focus:outline-none ${extra}`;
 }
 
 export function EditBindingModal({ binding, onSave, onCancel }: Props) {
@@ -166,7 +170,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
           <button
             type="button"
             onClick={onCancel}
-            className="grid !h-6 !w-6 place-items-center rounded border border-white/10 text-white/50 hover:text-white/80"
+            className="grid !h-6 !w-6 !p-0 place-items-center rounded border border-white/10 text-white/50 hover:text-white/80"
             style={{ background: "rgba(255,255,255,0.04)" }}
           >
             <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -178,7 +182,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
         <div className="space-y-4 px-4 py-4">
           {/* MIDI Trigger */}
           <section>
-            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">MIDI Trigger</h3>
+            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">MIDI Trigger</h3>
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -186,7 +190,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
                   <select
                     value={form.eventType}
                     onChange={(e) => set("eventType", e.target.value as "note_on" | "control_change")}
-                    className={inputCls()}
+                    className={selectCls()}
                   >
                     <option value="note_on">Note On</option>
                     <option value="control_change">Control Change</option>
@@ -235,7 +239,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
 
           {/* Command */}
           <section>
-            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Command</h3>
+            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">Command</h3>
             <div className="space-y-2">
               <div>
                 <FieldLabel>Command</FieldLabel>
@@ -263,7 +267,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
                   <select
                     value={form.executionMode}
                     onChange={(e) => set("executionMode", e.target.value as "argv" | "detached")}
-                    className={inputCls()}
+                    className={selectCls()}
                   >
                     <option value="argv">Blocking</option>
                     <option value="detached">Detached</option>
@@ -283,7 +287,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
 
           {/* Behavior */}
           <section>
-            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Behavior</h3>
+            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">Behavior</h3>
             <div className="flex flex-wrap items-center gap-4">
               <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-white/75">
                 <input
@@ -317,7 +321,7 @@ export function EditBindingModal({ binding, onSave, onCancel }: Props) {
 
           {/* Display */}
           <section>
-            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Display</h3>
+            <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">Display</h3>
             <div className="space-y-2">
               <div>
                 <FieldLabel>Label</FieldLabel>

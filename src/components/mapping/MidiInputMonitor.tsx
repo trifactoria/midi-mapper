@@ -1,3 +1,4 @@
+import { ToggleTrack } from "../ToggleSwitch";
 import type { AutomationState, MidiMonitorEvent } from "../v2/types";
 
 type Props = {
@@ -24,20 +25,7 @@ function Pill({ label, on, onClick }: { label: string; on: boolean; onClick?: ()
       aria-pressed={on}
     >
       <span>{label}</span>
-      <span
-        className={[
-          "relative inline-flex h-3.5 w-6 shrink-0 rounded-full transition",
-          on ? "bg-emerald-400/80 shadow-[0_0_10px_rgba(52,211,153,0.45)]" : "bg-white/15",
-        ].join(" ")}
-        aria-hidden
-      >
-        <span
-          className={[
-            "absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition",
-            on ? "left-[12px]" : "left-0.5",
-          ].join(" ")}
-        />
-      </span>
+      <ToggleTrack on={on} />
     </button>
   );
 }
@@ -67,9 +55,9 @@ export function MidiInputMonitor({
   const portLabel = selectedInputPort ?? last?.port ?? "";
 
   return (
-    <section className="rounded-md border border-white/10 bg-white/[0.025] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_2px_10px_-6px_rgba(0,0,0,0.45)]">
+    <section className="rounded-md border border-white/8 bg-white/[0.014] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
       <div className="mb-1.5 flex items-center justify-between">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/55">
+        <h3 className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
           Input Monitor
         </h3>
         {!last && (

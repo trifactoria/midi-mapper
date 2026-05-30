@@ -149,6 +149,7 @@ export function ActiveBindingsList({
                 />
               )}
               <KindBadge kind={binding.kind} />
+              {(onEditBinding || onToggleEnabled || onDuplicateBinding || onDeleteBinding) && (
               <button
                 type="button"
                 onClick={(event) => {
@@ -165,6 +166,7 @@ export function ActiveBindingsList({
                   <circle cx="8" cy="12.5" r="1" />
                 </svg>
               </button>
+              )}
               {menuOpenId === binding.id && (
                 <div className="absolute right-0 top-6 z-50 min-w-[128px] rounded border border-white/15 bg-zinc-900 py-0.5 shadow-xl">
                   {onEditBinding && (
