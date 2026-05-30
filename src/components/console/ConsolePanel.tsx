@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { groupRunsIntoSessions } from "../v2/adapters";
 import type { V2ExecutionSession, V2RunSummary } from "../v2/types";
 
@@ -9,6 +9,25 @@ type Props = {
   onClose: () => void;
   onClearRuns?: () => Promise<void>;
 };
+
+const STORAGE_KEY = "midi-mapper:console-height";
+const DEFAULT_HEIGHT = 240;
+const MIN_HEIGHT = 120;
+
+function getMaxHeight(): number {
+  return Math.floor(window.innerHeight * 0.6);
+}
+
+function readStoredHeight(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n >= MIN_HEIGHT) return n;
+    }
+  } catch { /* localStorage unavailable */ }
+  return DEFAULT_HEIGHT;
+}
 
 const STATUS_DOT: Record<string, string> = {
   success: "bg-emerald-400 shadow-[0_0_5px_rgba(52,211,153,0.6)]",
@@ -94,6 +113,49 @@ export function ConsolePanel({ runs, onClose, onClearRuns }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessions = useMemo(() => groupRunsIntoSessions(runs), [runs]);
 
+  // Height state — read from localStorage after mount to avoid SSR mismatch
+  const [height, setHeight] = useState(DEFAULT_HEIGHT);
+  const heightRef = useRef(DEFAULT_HEIGHT);
+
+  useEffect(() => {
+    const stored = readStoredHeight();
+    // Clamp against current viewport in case the window is smaller now
+    const clamped = Math.min(stored, getMaxHeight());
+    heightRef.current = clamped;
+    setHeight(clamped);
+  }, []);
+
+  // Drag-to-resize: attach global move/up listeners during drag to stay
+  // responsive even if the cursor leaves the handle strip.
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = heightRef.current;
+
+    function onMouseMove(ev: MouseEvent) {
+      const delta = startY - ev.clientY; // drag up → positive → taller
+      const next = Math.min(getMaxHeight(), Math.max(MIN_HEIGHT, startH + delta));
+      heightRef.current = next;
+      setHeight(next);
+    }
+
+    function onMouseUp() {
+      try {
+        localStorage.setItem(STORAGE_KEY, String(heightRef.current));
+      } catch { /* ignore */ }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    // Suppress text-selection and cursor flicker during drag
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, []);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -102,14 +164,27 @@ export function ConsolePanel({ runs, onClose, onClearRuns }: Props) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Auto-scroll to bottom when new runs arrive
+  // Auto-scroll to bottom when new runs arrive or height changes
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [runs.length]);
+  }, [runs.length, height]);
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 flex flex-col border-t border-white/15 bg-zinc-950 shadow-[0_-8px_40px_rgba(0,0,0,0.7)]">
+    <div
+      className="fixed inset-x-0 bottom-0 z-40 flex flex-col border-t border-white/15 bg-zinc-950 shadow-[0_-8px_40px_rgba(0,0,0,0.7)]"
+      style={{ height: `${height}px` }}
+    >
+      {/* Drag handle — sits at the very top edge, above the header */}
+      <div
+        role="separator"
+        aria-label="Drag to resize console"
+        className="group flex h-2.5 w-full shrink-0 cursor-ns-resize items-center justify-center"
+        onMouseDown={onDragStart}
+      >
+        <div className="h-0.5 w-10 rounded-full bg-white/15 transition-colors group-hover:bg-white/40" />
+      </div>
+
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-white/8 px-3 py-1.5">
         <div className="flex items-center gap-2">
@@ -151,8 +226,8 @@ export function ConsolePanel({ runs, onClose, onClearRuns }: Props) {
         </div>
       </div>
 
-      {/* Content */}
-      <div ref={scrollRef} className="h-[240px] overflow-y-auto font-mono text-[11px]">
+      {/* Content — fills remaining height, scrollable */}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto font-mono text-[11px]">
         {sessions.length === 0 ? (
           <p className="p-3 text-white/30">No runs yet. Trigger a binding or use Test Action.</p>
         ) : (

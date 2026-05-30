@@ -17,7 +17,7 @@ type Props = {
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/50">
+    <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
       {children}
     </h3>
   );

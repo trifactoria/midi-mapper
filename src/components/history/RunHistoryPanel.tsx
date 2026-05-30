@@ -162,19 +162,19 @@ export function RunHistoryPanel({ runs, onClearRuns }: Props) {
   const sessions = useMemo(() => groupRunsIntoSessions(runs), [runs]);
 
   return (
-    <section className="rounded-md border border-white/10 bg-white/[0.03] p-4">
-      <div className="mb-4 flex items-start justify-between gap-2">
-        <div>
-          <h2 className="text-base font-semibold text-white">Run history</h2>
-          <p className="text-xs text-white/45">
-            Execution timeline — grouped by trigger session.
-          </p>
-        </div>
+    <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
+          Run History
+          <span className="rounded bg-white/[0.06] !px-1 !py-px font-mono text-[10px] text-white/60">
+            {sessions.length}
+          </span>
+        </h3>
         {runs.length > 0 && onClearRuns && (
           <button
             type="button"
             onClick={() => setClearOpen(true)}
-            className="mt-0.5 !h-6 shrink-0 rounded-md border border-white/10 !px-2 !text-[10.5px] text-white/55 hover:text-white/80"
+            className="!h-6 shrink-0 rounded-md border border-white/10 !px-2 !text-[10.5px] text-white/55 hover:text-white/80"
             style={{ background: "rgba(255,255,255,0.03)" }}
           >
             Clear
@@ -183,7 +183,7 @@ export function RunHistoryPanel({ runs, onClearRuns }: Props) {
       </div>
 
       {sessions.length === 0 ? (
-        <p className="py-2 text-center text-[11px] text-white/30">No runs yet</p>
+        <p className="py-4 text-[11px] text-white/30">No runs yet — trigger a binding to see execution history.</p>
       ) : (
         <div className="space-y-1">
           {sessions.slice(0, 40).map((session) => (

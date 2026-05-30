@@ -439,32 +439,33 @@ export function ActionsPanel({
   };
 
   return (
-    <section className="rounded-md border border-white/10 bg-white/[0.03] p-4">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-white">Actions</h2>
-          <p className="text-xs text-white/45">Automation sequences grouped by trigger in the active layer.</p>
-        </div>
-        <div className="flex shrink-0 gap-1.5 font-mono text-[10px] text-white/45">
-          <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-px">{groups.length} triggers</span>
-          <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-px">{steps.length} steps</span>
-          <span className="rounded border border-emerald-300/15 bg-emerald-300/[0.05] px-1.5 py-px">{enabledCount} enabled</span>
+    <section className="rounded-md border border-white/8 bg-white/[0.014] p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.018),inset_0_0_24px_rgba(0,0,0,0.18)]">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
+          Actions
+          <span className="rounded bg-white/[0.06] !px-1 !py-px font-mono text-[10px] text-white/60">
+            {groups.length}
+          </span>
+        </h3>
+        <div className="flex shrink-0 items-center gap-1 font-mono text-[10px]">
+          <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-px text-white/45">{steps.length} steps</span>
+          <span className="rounded border border-emerald-300/15 bg-emerald-300/[0.05] px-1.5 py-px text-emerald-200/60">{enabledCount} enabled</span>
           {macros.length > 0 && (
-            <span className="rounded border border-cyan-300/15 bg-cyan-300/[0.04] px-1.5 py-px">{macros.length} macros</span>
+            <span className="rounded border border-cyan-300/15 bg-cyan-300/[0.04] px-1.5 py-px text-cyan-200/60">{macros.length} macros</span>
           )}
         </div>
       </div>
 
       {groups.length === 0 ? (
-        <p className="text-[11px] text-white/30">No actions yet — add bindings from the Mapping tab.</p>
+        <p className="py-4 text-center text-[11px] text-white/30">No actions yet — create bindings from the Mapping tab.</p>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid gap-2.5">
           {groups.map((group) => {
             const targetBindingId = group.primaryBindingId;
             const showMacros = macroDrawerKey === group.key;
             const showClone = cloneDrawerKey === group.key;
             return (
-              <div key={group.key} className="rounded-md border border-white/10 bg-black/20 p-3">
+              <div key={group.key} className="rounded-md border border-white/8 bg-white/[0.02] p-2.5">
                 {/* Trigger header */}
                 <div className="mb-2.5 flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -487,7 +488,8 @@ export function ActionsPanel({
                   <div className="flex flex-wrap items-center gap-1">
                     <button
                       type="button"
-                      className="!h-7 !rounded !px-2 !py-0 !text-[10px] text-cyan-100"
+                      className="!h-6 rounded-md border border-white/10 !px-2 !text-[10.5px] text-cyan-200 hover:text-cyan-100"
+                      style={{ background: "rgba(0,180,210,0.06)" }}
                       onClick={() => {
                         setAddGroupKey(addGroupKey === group.key ? null : group.key);
                         setEditingStepKey(null);
@@ -498,7 +500,8 @@ export function ActionsPanel({
                     </button>
                     <button
                       type="button"
-                      className="!h-7 !rounded !px-2 !py-0 !text-[10px] text-cyan-100"
+                      className="!h-6 rounded-md border border-white/10 !px-2 !text-[10.5px] text-white/55 hover:text-white/80"
+                      style={{ background: "rgba(255,255,255,0.03)" }}
                       onClick={() => targetBindingId && onAddDelayStep?.(targetBindingId)}
                     >
                       + wait
@@ -507,9 +510,12 @@ export function ActionsPanel({
                       type="button"
                       title="Macros / Templates"
                       className={[
-                        "!h-7 !rounded !px-2 !py-0 !text-[10px]",
-                        showMacros ? "text-cyan-200" : "text-white/40 hover:text-white/70",
+                        "!h-6 rounded-md border !px-2 !text-[10.5px] transition",
+                        showMacros
+                          ? "border-cyan-300/25 text-cyan-200"
+                          : "border-white/10 text-white/45 hover:text-white/75",
                       ].join(" ")}
+                      style={{ background: showMacros ? "rgba(0,180,210,0.07)" : "rgba(255,255,255,0.03)" }}
                       onClick={() => {
                         setMacroDrawerKey(showMacros ? null : group.key);
                         setCloneDrawerKey(null);
@@ -521,9 +527,12 @@ export function ActionsPanel({
                       type="button"
                       title="Clone sequence to another key"
                       className={[
-                        "!h-7 !rounded !px-2 !py-0 !text-[10px]",
-                        showClone ? "text-amber-200" : "text-white/40 hover:text-white/70",
+                        "!h-6 rounded-md border !px-2 !text-[10.5px] transition",
+                        showClone
+                          ? "border-amber-300/25 text-amber-200"
+                          : "border-white/10 text-white/45 hover:text-white/75",
                       ].join(" ")}
+                      style={{ background: showClone ? "rgba(251,191,36,0.07)" : "rgba(255,255,255,0.03)" }}
                       onClick={() => {
                         setCloneDrawerKey(showClone ? null : group.key);
                         setMacroDrawerKey(null);
