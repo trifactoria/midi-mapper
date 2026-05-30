@@ -1,6 +1,6 @@
 # Demo Checklist
 
-Steps to verify and record a clean demo of midi-mapper v2.
+Steps to verify and record a clean demo of MIDI Mapper.
 
 ## 1. Install dependencies
 

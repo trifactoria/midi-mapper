@@ -20,7 +20,7 @@ Some rough edges remain.
 
 - **MIDI runtime:** Live note/CC events stream to the frontend via WebSocket.
   Device selection persists across restarts.
-- **v2 binding model:** Profiles → layers → bindings hierarchy. Create, rename,
+- **Binding model:** Profiles → layers → bindings hierarchy. Create, rename,
   activate, and delete profiles and layers. Bindings support enable/disable,
   cooldown, armed mode, and per-binding notes.
 - **Native action types:** Four first-class action types beyond shell commands —
@@ -40,7 +40,7 @@ Some rough edges remain.
   package (backend frozen into the AppImage) requires PyInstaller bundling and
   Tauri sidecar wiring — see `docs/packaging-linux.md`.
 - **Legacy runtime:** The original context/binding model (`app.py`) still runs
-  internally. It is not exposed in the v2 UI and is not the product direction.
+  internally. It is not exposed in the UI and is not the product direction.
 
 ## Prerequisites
 
@@ -116,7 +116,7 @@ Run all checks (pytest + tsc + build):
 bash scripts/check.sh
 ```
 
-The v2 interface is at **`http://localhost:3000/v2`**.
+The interface is at **`http://localhost:3000/v2`**.
 
 ## Running as a Desktop App
 
