@@ -204,12 +204,6 @@ See `docs/demo-checklist.md` for a full demo and recording guide.
 5. Fill in the field and click **Test Action** to run it immediately.
 6. Click **Create Binding** to save — assign a MIDI trigger later.
 
-Or seed the database directly (no backend needed):
-
-```bash
-.venv/bin/python scripts/seed-demo-v2.py
-```
-
 ## Configuration
 
 Key `.env` variables:

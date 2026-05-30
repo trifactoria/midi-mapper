@@ -59,7 +59,7 @@ bash scripts/dev-stack.sh
 - The status indicator turns green when a device is active.
 
 Without a physical controller:
-- Use `scripts/seed-demo-v2.py` to pre-populate bindings.
+- Import `examples/demo-profile.json` or `examples/demo-workflows.json` (see step 5).
 - Use the note grid in Mouse Mode to trigger actions by click.
 
 ## 5. Import the demo profile

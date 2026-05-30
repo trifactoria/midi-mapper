@@ -95,69 +95,36 @@ Backend:  http://127.0.0.1:8765/api/health
 Frontend: http://localhost:3000/v2
 ```
 
-## V2 Demo Seed
+## Demo Profile
 
-Use the demo seed to prove `/v2` is reading and mutating real backend data
-instead of mock fallback data.
+Import a ready-made profile to verify the full stack end-to-end.
 
-In one terminal, start the backend:
-
-```bash
-bash scripts/dev-backend.sh
-```
-
-In another terminal, seed the v2 demo data:
+Start the stack:
 
 ```bash
-.venv/bin/python scripts/seed-demo-v2.py
+bash scripts/dev-stack.sh
 ```
 
-The seed is idempotent and safe to rerun. It creates or updates:
+Open `http://localhost:3000/v2`, click the import icon next to Profiles in the
+sidebar, and select `examples/demo-profile.json` (two-layer demo) or
+`examples/demo-workflows.json` (flat single-layer demo).
 
-```text
-Profile: Demo Workflow
-Layer:   Default Layer
-Binding: C3 -> echo "C3 triggered"
-Binding: CC 21 value >= 100 -> echo "CC 21 high"
-```
+After import, the profile activates and its bindings appear in the Active
+Bindings panel. Use **Test Action** in Quick Bind to trigger each binding
+manually — no MIDI device required.
 
-You can verify the backend directly:
+Verify the backend directly if needed:
 
 ```bash
 curl http://127.0.0.1:8765/api/profiles
-curl http://127.0.0.1:8765/api/profiles/1/layers
 ```
-
-Use the profile and layer IDs printed by the seed command if your database
-already had data.
-
-Start the frontend:
-
-```bash
-bash scripts/dev-frontend.sh
-```
-
-Open:
-
-```text
-http://localhost:3000/v2
-```
-
-The `/v2` footer should show `Data Real backend data`, and the sidebar should
-show `Demo Workflow` and `Default Layer`. The Active Bindings panel should show
-the C3 and CC 21 demo bindings.
 
 Manual verification flow:
 
-1. Select a demo binding in Active Bindings and confirm the editor populates.
-2. Click Dry Run and confirm a command summary appears.
-3. Click Test Action and confirm Run History updates.
-4. Create a new command binding from Quick Bind.
-5. Confirm it appears in Active Bindings.
-
-If the footer shows `Mock fallback` or `Backend unavailable`, creation and test
-controls remain guarded and will explain that a real backend layer/action is
-required.
+1. Select a binding in Active Bindings and confirm the editor populates.
+2. Click Test Action and confirm Run History updates.
+3. Create a new command binding from Quick Bind.
+4. Confirm it appears in Active Bindings.
 
 ## Checks
 
